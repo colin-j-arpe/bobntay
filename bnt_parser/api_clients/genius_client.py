@@ -10,7 +10,7 @@ class GeniusClient:
 
     # def __init__(self, client_id, client_secret, access_token):
 
-    def search(self, artist: str, title: str) -> dict:
+    def search(self, artist: str, title: str) -> dict | None:
         url = self.BASE_URL + '/search'
         query = {
             'q': f"{artist} {title}"
@@ -30,4 +30,6 @@ class GeniusClient:
         for hit in results['response']['hits']:
             song = hit['result']
             if song['primary_artist']['name'].lower() == artist.lower() and song['title'].lower() == title.lower():
-                return song['url']
+                return song
+
+        return None

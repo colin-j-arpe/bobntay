@@ -1,6 +1,9 @@
+import logging
+
 from bnt_parser.api_clients.genius_client import GeniusClient
 from bnt_parser.api_clients.musixmatch_client import MusixmatchClient
 from bnt_parser.tables.song_table import SongTable
+from bnt_parser.utils.genius_page import GeniusPage
 
 class SongService:
     """
@@ -13,6 +16,69 @@ class SongService:
             musixmatch_client: MusixmatchClient,
             genius_client: GeniusClient
     ):
+        self.song_table = song_table
+        self.musixmatch_client = musixmatch_client
+        self.genius_client = genius_client
+
+        self.lyrics = []
+        self.sections = []
+        self.title = None
+        self.artist = None
+        self.release_title = None
+        self.writers = []
+
+    def select_song(self):
+        """
+        Select a song from the Musixmatch API.
+        Check database for each song, take first new song found.
+        """
+        for track in self.musixmatch_client.get_next_song():
+            if track is None:
+                break
+
+            if self.song_table.song_exists(
+                title=track.track_name,
+                artist=track.artist_name,
+                release_title=track.album_name,
+            ):
+                continue
+
+            found_lyrics = self.fetch_genius_page(
+                artist=track['artist_name'],
+                title=track['track_name'],
+            )
+            if found_lyrics is False:
+                logging.info('Skipping song "%s" by %s - no lyrics found', track['track_name'], track['artist_name'])
+                continue
+
+            self.title = track['track_name']
+            self.artist = track['artist_name']
+            self.release_title = track['album_name']
+
+            break
+
+        return self
+
+    def fetch_genius_page(self, artist: str, title: str) -> bool:
+        """
+        Fetch the Genius page for the selected song.
+        This method should be called after selecting a song.
+        """
+
+        genius_entry = self.genius_client.search(
+            artist=self.artist,
+            title=self.title,
+        )
+        if genius_entry is None:
+            return False
+
+        for writer in genius_entry['writer_artists']:
+            self.writers.append(writer['name'])
+
+        genius_page = GeniusPage(genius_entry['url'])
+        self.lyrics = genius_page.lyrics()
+
+        return True
 
     def parse_sections(self):
         """
