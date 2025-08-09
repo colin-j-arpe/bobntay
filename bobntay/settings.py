@@ -36,6 +36,10 @@ INSTALLED_APPS = [
     # BobnTay apps
     'bnt_parser',
 
+    # Third-party apps
+    'rest_framework',
+    'django_crontab',
+
     # Default Django apps
     'django.contrib.admin',
     'django.contrib.auth',
@@ -43,6 +47,16 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+]
+
+REST_FRAMEWORK = {
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.DjangoModelPermissionsOrAnonReadOnly',
+    ],
+}
+
+CRONJOBS = [
+    ('0 * * * *', 'bnt_parser.cron.add_song')
 ]
 
 MIDDLEWARE = [

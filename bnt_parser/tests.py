@@ -4,7 +4,7 @@ from django.test import TestCase
 from django.db import connections
 
 # Test API clients
-from bnt_parser.api_clients import genius_client
+from bnt_parser.clients import genius_client
 from bnt_parser.services import song_service
 from bnt_parser.utils import genius_page
 

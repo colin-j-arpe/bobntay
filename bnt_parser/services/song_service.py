@@ -1,7 +1,7 @@
 import logging
 
-from bnt_parser.api_clients.genius_client import GeniusClient
-from bnt_parser.api_clients.musixmatch_client import MusixmatchClient
+from bnt_parser.clients.genius_client import GeniusClient
+from bnt_parser.clients.musixmatch_client import MusixmatchClient
 from bnt_parser.tables.song_table import SongTable
 from bnt_parser.utils.genius_page import GeniusPage
 
@@ -124,5 +124,14 @@ class SongService:
         Save the song and its sections to the database.
         This method should be implemented to handle the actual saving logic.
         """
-        # Placeholder for saving logic
+        if not self.lyrics \
+            or not self.sections \
+            or not self.title \
+            or not self.artist \
+            or not self.release_title \
+            or not self.writers:
+            raise ValueError("Incomplete song data. Cannot save song.")
+
+
+
         pass
