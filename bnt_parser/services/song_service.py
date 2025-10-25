@@ -194,7 +194,6 @@ class SongService:
                     if part:
                         stripped_words.add(part.lower())
 
-        print(sorted(list(stripped_words)))
         return sorted(list(stripped_words))
 
     def save_lyrics(self):

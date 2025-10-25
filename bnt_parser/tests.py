@@ -142,7 +142,7 @@ class SongServiceTestCase(TestCase):
 
             self.service.select_song()
             mock_get_next_song.assert_called_once()
-            mock_get_table.assert_called_with(self.service.TABLES['song'])
+            mock_get_table.assert_called_with('song')
             assert mock_get_table.call_count == 2, "Expected two calls to access the song table"
 
             expected_song_calls = [
