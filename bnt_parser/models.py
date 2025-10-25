@@ -35,7 +35,7 @@ class Release(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"\"{self.name}\" by {self.artist}"
+        return f"\"{self.title}\" by {self.artist}"
 
     class Meta:
         verbose_name = "Release"
@@ -80,6 +80,9 @@ class Section(models.Model):
 
     def __str__(self):
         return f"Section {self.order} ({self.type}) of \"{self.song.title}\""
+
+    def get_type_display(self) -> str:
+        return self.SectionTypeEnum(self.type)
 
     class Meta:
         verbose_name = "Section"

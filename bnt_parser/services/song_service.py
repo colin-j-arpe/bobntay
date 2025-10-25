@@ -1,31 +1,36 @@
 import logging
+import re
+from re import Pattern
 
 from bnt_parser.clients.genius_client import GeniusClient
 from bnt_parser.clients.musixmatch_client import MusixmatchClient
-from bnt_parser.tables.song_table import SongTable
+from bnt_parser.models import ExternalSource
+from bnt_parser.services.table_service import TableService
 from bnt_parser.utils.genius_page import GeniusPage
 
 class SongService:
     """
     Service class for handling song-related operations.
     """
-
     def __init__(
             self,
-            song_table: SongTable,
+            table_service: TableService,
             musixmatch_client: MusixmatchClient,
             genius_client: GeniusClient
     ):
-        self.song_table = song_table
+        self.table_service = table_service
         self.musixmatch_client = musixmatch_client
         self.genius_client = genius_client
 
+        self.musixmatch_record = None
+        self.genius_record = None
+
+        self.artist = ''
+        self.title = ''
         self.lyrics = []
         self.sections = []
-        self.title = None
-        self.artist = None
-        self.release_title = None
-        self.writers = []
+
+        self.song_object = None
 
     def select_song(self):
         """
@@ -36,10 +41,10 @@ class SongService:
             if track is None:
                 break
 
-            if self.song_table.song_exists(
-                title=track.track_name,
-                artist=track.artist_name,
-                release_title=track.album_name,
+            if self.table_service.get_table('song').song_exists(
+                title=track['track_name'],
+                artist=track['artist_name'],
+                release_title=track['album_name'],
             ):
                 continue
 
@@ -51,9 +56,7 @@ class SongService:
                 logging.info('Skipping song "%s" by %s - no lyrics found', track['track_name'], track['artist_name'])
                 continue
 
-            self.title = track['track_name']
-            self.artist = track['artist_name']
-            self.release_title = track['album_name']
+            self.musixmatch_record = track
 
             break
 
@@ -66,19 +69,55 @@ class SongService:
         """
 
         genius_entry = self.genius_client.search(
-            artist=self.artist,
-            title=self.title,
+            artist=artist,
+            title=title,
         )
         if genius_entry is None:
             return False
 
-        for writer in genius_entry['writer_artists']:
-            self.writers.append(writer['name'])
-
+        self.genius_record = genius_entry
         genius_page = GeniusPage(genius_entry['url'])
         self.lyrics = genius_page.lyrics()
 
+        self.title = title
+        self.artist = artist
+
         return True
+
+    def save_song(self):
+        """
+        Save the song and its sections to the database.
+        This method should be implemented to handle the actual saving logic.
+        """
+        if not self.lyrics \
+            or not self.title \
+            or not self.artist:
+            raise ValueError("Incomplete song data. Cannot save song.")
+
+        # Save the external source for Genius
+        external_source = self.table_service.get_table('external_source').save(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=self.genius_record['id'],
+            endpoint=self.genius_record['url'],
+        )
+
+        # Save the album
+        album_entry = self.musixmatch_client.get_release(self.musixmatch_record['album_id'])
+        release = self.table_service.get_table('release').save_if_not_exists(album_entry)
+
+        # Save the songwriter(s)
+        writer_objects = []
+        for writer_data in self.genius_record['writer_artists']:
+            writer_objects.append(self.table_service.get_table('writer').save_if_not_exists(writer_data))
+
+        # Save the song
+        self.song_object = self.table_service.get_table('song').save_if_not_exists(
+            title=self.title,
+            artist=self.artist,
+            release=release,
+            external_source=external_source,
+            writers=writer_objects,
+        )
 
     def parse_sections(self):
         """
@@ -88,7 +127,7 @@ class SongService:
 
         if self.lyrics[0][0] != '[':
             # If the first line is not a section header, treat the entire lyrics as a single verse
-            self.sections.push({
+            self.sections.append({
                 'type': 'Verse',
                 'song_order': 1,
                 'lines': self.lyrics,
@@ -98,9 +137,9 @@ class SongService:
 
         section = None
         for line in self.lyrics:
-            if line[0] == '[':
-                if section:
-                    # If we were already in a section, save it
+            if line.startswith('['):
+                if section and len(section['lines']) > 0:
+                    # If we are already in a section and it has lines, save it
                     self.sections.append(section)
 
                 index_end = line.find(' ')
@@ -115,23 +154,74 @@ class SongService:
                 }
 
             else:
-                section['lines'].append(line)  # Add line to the current section
+                if len(line) > 0 and section is not None: # Do not add empty lines
+                    section['lines'].append(line)  # Add line to the current section
 
-        self.sections.append(section)
+        if section and len(section['lines']) > 0:
+            self.sections.append(section)
 
-    def save_song(self):
+    def parse_words(self, line: str) -> list[str]:
         """
-        Save the song and its sections to the database.
+        Parse a line into individual words.
+        This is a simple implementation and can be enhanced as needed.
+        """
+        split_pattern: Pattern[str] = re.compile(r'[ /&]')
+        words = split_pattern.split(line)
+
+        strip_pattern: Pattern[str] = re.compile(r'(?:^\W+|\W+$)')
+        possessive_pattern: Pattern[str] = re.compile(r"('s)$")
+        hyphen_pattern: Pattern[str] = re.compile(r'(^\w+-\w+$)')
+        stripped_words = set()
+
+        for word in words:
+            # Strip punctuation from start and end of the word; save word
+            word = strip_pattern.sub('', word)
+            if word:
+                stripped_words.add(word.lower())
+
+            # Detect if the word is a possessive; save the base word in addition to the possessive form
+            possessive = possessive_pattern.search(word)
+            if possessive:
+                base_word = possessive_pattern.sub('', word)
+                if base_word:
+                    stripped_words.add(base_word.lower())
+
+            # Detect hyphenated words; save each part separately
+            hyphenated = hyphen_pattern.match(word)
+            if hyphenated:
+                parts = word.split('-')
+                for part in parts:
+                    if part:
+                        stripped_words.add(part.lower())
+
+        print(sorted(list(stripped_words)))
+        return sorted(list(stripped_words))
+
+    def save_lyrics(self):
+        """
+        Save the lyrics sections to the database.
         This method should be implemented to handle the actual saving logic.
         """
-        if not self.lyrics \
-            or not self.sections \
-            or not self.title \
-            or not self.artist \
-            or not self.release_title \
-            or not self.writers:
-            raise ValueError("Incomplete song data. Cannot save song.")
+        self.parse_sections()
 
+        if not self.sections:
+            raise ValueError("No sections to save. Cannot save lyrics.")
 
+        for section in self.sections:
+            section_object = self.table_service.get_table('section').save(
+                song=self.song_object,
+                section_data=section,
+            )
 
-        pass
+            for line_order, line in enumerate(section['lines'], start=1):
+                line_object = self.table_service.get_table('line').save(
+                    lyrics=line,
+                    order=line_order,
+                    section=section_object,
+                )
+
+                for word in self.parse_words(line):
+                    self.table_service.get_table('word').save_if_not_exists(
+                        text=word,
+                        line=line_object,
+                    )

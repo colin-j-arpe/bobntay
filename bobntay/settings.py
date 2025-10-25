@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from pathlib import Path
 import dj_database_url
 import os
+import dotenv
+dotenv.load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -56,7 +58,7 @@ REST_FRAMEWORK = {
 }
 
 CRONJOBS = [
-    ('0 * * * *', 'bnt_parser.cron.add_song')
+    ('0-59 * * * *', 'bnt_parser.cron.add_song')
 ]
 
 MIDDLEWARE = [
