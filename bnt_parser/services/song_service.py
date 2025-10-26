@@ -87,15 +87,8 @@ class SongService:
             or not self.artist:
             raise ValueError("Incomplete song data. Cannot save song.")
 
-        # Save the external source for Genius
-        external_source = self.table_service.get_table('external_source').save(
-            source=ExternalSource.SourceEnum.GENIUS,
-            external_id=self.genius_record['id'],
-            endpoint=self.genius_record['url'],
-        )
-
         # Save the album
-        album_entry = self.musixmatch_client.get_release(self.musixmatch_record['album_id'])
+        album_entry = self.genius_client.fetch_entry(path=self.genius_record['album']['api_path'])
         release = self.table_service.get_table('release').save_if_not_exists(album_entry)
 
         # Save the songwriter(s)
@@ -105,11 +98,8 @@ class SongService:
 
         # Save the song
         self.song_object = self.table_service.get_table('song').save_if_not_exists(
-            title=self.title,
-            artist=self.artist,
-            release=release,
-            external_source=external_source,
-            writers=writer_objects,
+            song_record=self.genius_record,
+            album_object=release,
         )
 
     def parse_sections(self):

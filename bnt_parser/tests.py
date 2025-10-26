@@ -173,9 +173,9 @@ class SongServiceTestCase(TestCase):
         test_title = 'Test Song'
         test_artist = 'Test Artist'
         test_lyrics = '[Verse 1]\nTest lyrics'
-        test_mmx_album_id = 12345
-        test_mmx_album = {
-            'album_id': test_mmx_album_id,
+        test_album_id = 12345
+        test_album = {
+            'album_id': test_album_id,
             'album_name': 'Test Album',
             'artist_name': test_artist,
         }
@@ -210,56 +210,49 @@ class SongServiceTestCase(TestCase):
         assert str(context.exception) == "Incomplete song data. Cannot save song.", "Cannot save without title, artist, and lyrics"
 
         self.service.lyrics = test_lyrics
-        self.service.musixmatch_record = test_mmx_album
-        self.service.genius_record = {
+        self.service.musixmatch_record = test_album
+        test_genius_entry = {
             'id': test_genius_entry_id,
-            'url': test_genius_url,
+            'api_path': f'/songs/{test_genius_entry_id}',
+            'album': {'api_path': f'/albums/{test_album_id}'},
             'writer_artists': test_writers,
         }
+        self.service.genius_record = test_genius_entry
 
         with (
-            patch.object(MusixmatchClient, 'get_release') as mock_get_release,
+            patch.object(GeniusClient, 'fetch_entry') as mock_fetch_entry,
             patch.object(TableService, 'get_table') as mock_get_table,
-            patch.object(ExternalSourceTable, 'save') as mock_external_source_save,
             patch.object(ReleaseTable, 'save_if_not_exists') as mock_release_table_save,
             patch.object(WriterTable, 'save_if_not_exists') as mock_writer_table_save,
             patch.object(SongTable, 'save_if_not_exists') as mock_song_table_save,
         ):
             # Configure the mocks
-            mock_get_release.return_value = test_mmx_album
+            mock_fetch_entry.return_value = test_album
             mock_get_table.side_effect = [
-                self.external_source_table,
                 self.release_table,
                 self.writer_table,
                 self.writer_table,
                 self.song_table,
             ]
-            mock_external_source_save.return_value = test_external_source
             mock_release_table_save.return_value = test_release_object
             mock_writer_table_save.side_effect = test_writer_objects
             mock_song_table_save.return_value = test_song_id
 
             self.service.save_song()
 
-            mock_external_source_save.assert_called_once_with(
-                source=ExternalSource.SourceEnum.GENIUS,
-                external_id=test_genius_entry_id,
-                endpoint=test_genius_url,
-            )
-
-            mock_get_release.assert_called_once_with(test_mmx_album_id)
+            mock_fetch_entry.assert_called_once_with(path=test_genius_entry['album']['api_path'])
 
             expected_get_table_calls = [
-                call('external_source'),
+                # call('external_source'),
                 call('release'),
                 call('writer'),
                 call('writer'),
                 call('song'),
             ]
             mock_get_table.assert_has_calls(expected_get_table_calls)
-            assert mock_get_table.call_count == 5, "Expected four calls to access different tables"
+            assert mock_get_table.call_count == 4, "Expected four calls to access different tables"
 
-            mock_release_table_save.assert_called_once_with(test_mmx_album)
+            mock_release_table_save.assert_called_once_with(test_album)
 
             expected_writer_calls = [
                 call(test_writers[0]),
@@ -269,11 +262,8 @@ class SongServiceTestCase(TestCase):
             assert mock_writer_table_save.call_count == 2, "Expected two calls to save writers"
 
             mock_song_table_save.assert_called_once_with(
-                title=test_title,
-                artist=test_artist,
-                release=test_release_object,
-                external_source=test_external_source,
-                writers=test_writer_objects,
+                song_record=test_genius_entry,
+                album_object=test_release_object,
             )
 
     def test_parse_sections(self):

@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import re
 import urllib.parse
 import requests
 
@@ -11,7 +12,7 @@ WRITERS = [
     'robert pollard',
     'taylor swift',
 ]
-PAGE_SIZE = 48
+PAGE_SIZE = 50
 
 class GeniusClient:
     """
@@ -99,6 +100,8 @@ class GeniusClient:
         :param url: The URL of the Genius entry.
         :return: The Genius entry data or None if not found.
         """
+        entry_type = re.compile('\\/(\\w+)s\\/').findall(path)[0]
+
         response = requests.get(
             url=f"{self.BASE_URL}/{path}",
             headers=self.headers,
@@ -109,4 +112,4 @@ class GeniusClient:
             logging.error(f'Genius API returned status {response.status_code}; response: {response.text}')
             return None
 
-        return data['response']['song']
+        return data['response'][entry_type]
