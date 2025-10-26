@@ -23,3 +23,23 @@ class ExternalSourceTable():
         external_source.save()
 
         return external_source
+
+    def song_exists(self, api: ExternalSource.SourceEnum, id: int, url: str) -> bool:
+        """
+        Check if an external source exists in the database.
+
+        :param api: The source of the external ID (e.g., 'GENIUS').
+        :param id: ID in the external API.
+        :param url: The URL endpoint associated with the external ID.
+        :return: True if the external source exists, False otherwise.
+        """
+        external_source_results = ExternalSource.objects.filter(
+            source=api,
+            external_id=id
+        ).all()
+
+        for source in external_source_results:
+            if source.endpoint == url:
+                return True
+
+        return False

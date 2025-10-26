@@ -87,15 +87,22 @@ class SongServiceTestCase(TestCase):
                 connection.close()
 
     def test_select_song(self):
+        existing_song_external_id = 1234
         existing_song = {
-            'track_name': 'Existing Song Title',
-            'artist_name': 'Existing Song Artist',
-            'album_name': 'Existing Song Album',
+            'title': 'Existing Song Title',
+            'primary_artist_names': 'Existing Song Artist',
+            'album': {'full_title': 'Existing Song Album'},
+            'id': existing_song_external_id,
+            'api_path': f'/songs/{existing_song_external_id}',
         }
+        new_song_external_id = 4321
         new_song = {
-            'track_name': 'New Song Title',
-            'artist_name': 'New Song Artist',
-            'album_name': 'New Song Album',
+            'title': 'New Song Title',
+            'primary_artist_names': 'New Song Artist',
+            'album': {'full_title': 'New Song Album'},
+            'id': new_song_external_id,
+            'api_path': f'/songs/{new_song_external_id}',
+            'url': 'https://genius.com/Artist-name-song-title-lyrics',
         }
         new_song_writers = [
             {'name': 'New Song Writer 2'},
@@ -115,10 +122,9 @@ class SongServiceTestCase(TestCase):
         ]
 
         with (
-            patch.object(MusixmatchClient, 'get_next_song') as mock_get_next_song,
+            patch.object(GeniusClient, 'get_next_song') as mock_get_next_song,
             patch.object(TableService, 'get_table') as mock_get_table,
-            patch.object(SongTable, 'song_exists') as mock_song_exists,
-            patch.object(GeniusClient, 'search') as mock_genius_search,
+            patch.object(ExternalSourceTable, 'song_exists') as mock_song_exists,
             patch.object(GeniusPage, 'lyrics') as mock_lyrics,
         ):
             # Configure the mock to return a generator of song data
@@ -129,46 +135,39 @@ class SongServiceTestCase(TestCase):
             ])
 
             # Simulate that the table service returns the song table
-            mock_get_table.return_value = self.song_table
+            mock_get_table.return_value = self.external_source_table
 
             # Simulate that the first song exists in the database, the second does not
             mock_song_exists.side_effect = [True, False]
-
-            # Simulate that the Genius search returns a new song entry
-            mock_genius_search.return_value = new_song_genius_entry
 
             # Simulate that the GeniusPage.get_lyrics method returns the new song lyrics
             mock_lyrics.return_value = new_song_lyrics
 
             self.service.select_song()
             mock_get_next_song.assert_called_once()
-            mock_get_table.assert_called_with('song')
-            assert mock_get_table.call_count == 2, "Expected two calls to access the song table"
+            mock_get_table.assert_called_with('external_source')
+            assert mock_get_table.call_count == 2, "Expected two calls to access the external source table"
 
             expected_song_calls = [
                 call(
-                    title=existing_song['track_name'],
-                    artist=existing_song['artist_name'],
-                    release_title=existing_song['album_name'],
+                    api=ExternalSource.SourceEnum.GENIUS,
+                    id=existing_song_external_id,
+                    url=existing_song['api_path'],
                 ),
                 call(
-                    title=new_song['track_name'],
-                    artist=new_song['artist_name'],
-                    release_title=new_song['album_name'],
+                    api=ExternalSource.SourceEnum.GENIUS,
+                    id=new_song_external_id,
+                    url=new_song['api_path'],
                 ),
             ]
             mock_song_exists.assert_has_calls(expected_song_calls)
             assert mock_song_exists.call_count == 2, "Expected to check if two songs exist"
 
-            mock_genius_search.assert_called_once_with(
-                title=new_song['track_name'],
-                artist=new_song['artist_name'],
-            )
             mock_lyrics.assert_called_once()
 
-            assert self.service.artist == new_song['artist_name'], "Expected artist name"
-            assert self.service.title == new_song['track_name'], "Expected song title"
-            assert self.service.musixmatch_record is not None, "Expected musixmatch record to be set"
+            assert self.service.artist == new_song['primary_artist_names'], "Expected artist name"
+            assert self.service.title == new_song['title'], "Expected song title"
+            assert self.service.genius_record is not None, "Expected musixmatch record to be set"
 
     def test_save_song(self):
         test_title = 'Test Song'

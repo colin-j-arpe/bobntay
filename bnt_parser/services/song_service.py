@@ -37,50 +37,43 @@ class SongService:
         Select a song from the Musixmatch API.
         Check database for each song, take first new song found.
         """
-        for track in self.musixmatch_client.get_next_song():
+        for track in self.genius_client.get_next_song():
             if track is None:
+                logging.info('No more songs found.')
                 break
 
-            if self.table_service.get_table('song').song_exists(
-                title=track['track_name'],
-                artist=track['artist_name'],
-                release_title=track['album_name'],
+            if self.table_service.get_table('external_source').song_exists(
+                api=ExternalSource.SourceEnum.GENIUS,
+                id=track['id'],
+                url=track['api_path'],
             ):
                 continue
 
-            found_lyrics = self.fetch_genius_page(
-                artist=track['artist_name'],
-                title=track['track_name'],
-            )
-            if found_lyrics is False:
+            found_lyrics = self.fetch_genius_page(track)
+            if not found_lyrics:
                 logging.info('Skipping song "%s" by %s - no lyrics found', track['track_name'], track['artist_name'])
                 continue
-
-            self.musixmatch_record = track
 
             break
 
         return self
 
-    def fetch_genius_page(self, artist: str, title: str) -> bool:
+    def fetch_genius_page(self, track_data: dict) -> bool:
         """
         Fetch the Genius page for the selected song.
         This method should be called after selecting a song.
         """
 
-        genius_entry = self.genius_client.search(
-            artist=artist,
-            title=title,
-        )
+        genius_entry = self.genius_client.fetch_entry(path=track_data['api_path'])
         if genius_entry is None:
             return False
 
         self.genius_record = genius_entry
-        genius_page = GeniusPage(genius_entry['url'])
+        genius_page = GeniusPage(track_data['url'])
         self.lyrics = genius_page.lyrics()
 
-        self.title = title
-        self.artist = artist
+        self.title = track_data['title']
+        self.artist = track_data['primary_artist_names']
 
         return True
 

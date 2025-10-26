@@ -91,3 +91,22 @@ class GeniusClient:
                 return song
 
         return None
+
+    def fetch_entry(self, path: str) -> dict | None:
+        """
+        Fetches a Genius entry by its URL.
+
+        :param url: The URL of the Genius entry.
+        :return: The Genius entry data or None if not found.
+        """
+        response = requests.get(
+            url=f"{self.BASE_URL}/{path}",
+            headers=self.headers,
+        )
+        data = response.json()
+
+        if response.status_code != 200:
+            logging.error(f'Genius API returned status {response.status_code}; response: {response.text}')
+            return None
+
+        return data['response']['song']
