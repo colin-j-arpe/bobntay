@@ -9,11 +9,9 @@ def add_song():
     This function is intended to be called by a cron job.
     """
     table_service = TableService()
-    mxm_client = MusixmatchClient()
     gns_client = GeniusClient()
     song_service = SongService(
         table_service=table_service,
-        musixmatch_client=mxm_client,
         genius_client=gns_client
     )
 

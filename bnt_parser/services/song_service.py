@@ -3,7 +3,6 @@ import re
 from re import Pattern
 
 from bnt_parser.clients.genius_client import GeniusClient
-from bnt_parser.clients.musixmatch_client import MusixmatchClient
 from bnt_parser.models import ExternalSource
 from bnt_parser.services.table_service import TableService
 from bnt_parser.utils.genius_page import GeniusPage
@@ -15,11 +14,9 @@ class SongService:
     def __init__(
             self,
             table_service: TableService,
-            musixmatch_client: MusixmatchClient,
             genius_client: GeniusClient
     ):
         self.table_service = table_service
-        self.musixmatch_client = musixmatch_client
         self.genius_client = genius_client
 
         self.musixmatch_record = None
@@ -34,7 +31,7 @@ class SongService:
 
     def select_song(self):
         """
-        Select a song from the Musixmatch API.
+        Select a song from the Genius API.
         Check database for each song, take first new song found.
         """
         for track in self.genius_client.get_next_song():
@@ -118,7 +115,7 @@ class SongService:
 
             return
 
-        section = None
+        section = {'lines': []}
         for line in self.lyrics:
             if line.startswith('['):
                 if section and len(section['lines']) > 0:
@@ -151,7 +148,7 @@ class SongService:
         split_pattern: Pattern[str] = re.compile(r'[ /&]')
         words = split_pattern.split(line)
 
-        strip_pattern: Pattern[str] = re.compile(r'(?:^\W+|\W+$)')
+        strip_pattern: Pattern[str] = re.compile(r'(^\W+|\W+$)')
         possessive_pattern: Pattern[str] = re.compile(r"('s)$")
         hyphen_pattern: Pattern[str] = re.compile(r'(^\w+-\w+$)')
         stripped_words = set()
