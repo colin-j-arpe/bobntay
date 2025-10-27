@@ -14,6 +14,7 @@ class SectionTable:
         :param section_data: Object containing section data.
         :return: The saved Section object.
         """
+        # Default to Verse if type is not recognized
         if section_data['type'] in Section.SectionTypeEnum.labels:
             try:
                 section_type = Section.SectionTypeEnum[section_data['type'].upper()]

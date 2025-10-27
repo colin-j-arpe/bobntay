@@ -107,33 +107,30 @@ class SongService:
         """
         self.sections = []
 
-        if self.lyrics[0][0] != '[':
-            # If the first line is not a section header, treat the entire lyrics as a single verse
-            self.sections.append({
-                'type': 'Verse',
-                'song_order': 1,
-                'lines': self.lyrics,
-            })
+        song_order = 1
+        section = self.new_section(song_order)
 
-            return
-
-        section = {'lines': []}
         for line in self.lyrics:
-            if line.startswith('['):
-                if section and len(section['lines']) > 0:
-                    # If we are already in a section and it has lines, save it
+            # Empty line indicates new section
+            if line.strip() == '' and len(section['lines']) > 0:
+                self.sections.append(section)
+                song_order += 1
+                section = self.new_section(song_order)
+
+            # Section types are in brackets
+            elif line.startswith('['):
+                if len(section['lines']) > 0:
+                    # If we were already in a section and it has lines, save it
                     self.sections.append(section)
+                    song_order += 1
+                    section = self.new_section(song_order)
 
                 index_end = line.find(' ')
                 if index_end == -1:
                     # If no space found, treat the whole line as a section type
                     index_end = line.find(']')
                 section_type = line[1:index_end]
-                section = {
-                    'type': section_type,
-                    'song_order': len(self.sections) + 1,  # Incremental order
-                    'lines': [],
-                }
+                section['type'] = section_type
 
             else:
                 if len(line) > 0 and section is not None: # Do not add empty lines
@@ -141,6 +138,13 @@ class SongService:
 
         if section and len(section['lines']) > 0:
             self.sections.append(section)
+
+    def new_section(self, order):
+        return {
+            'type': '',
+            'song_order': order,
+            'lines': [],
+        }
 
     def parse_words(self, line: str) -> list[str]:
         """
