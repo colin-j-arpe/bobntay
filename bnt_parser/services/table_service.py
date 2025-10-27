@@ -3,6 +3,7 @@ from bnt_parser.tables.line_table import LineTable
 from bnt_parser.tables.release_table import ReleaseTable
 from bnt_parser.tables.section_table import SectionTable
 from bnt_parser.tables.song_table import SongTable
+from bnt_parser.tables.word_table import WordTable
 from bnt_parser.tables.writer_table import WriterTable
 
 class TableService:
@@ -12,6 +13,7 @@ class TableService:
         "release": ReleaseTable,
         "section": SectionTable,
         "song": SongTable,
+        "word": WordTable,
         "writer": WriterTable,
     }
     TABLES = {}

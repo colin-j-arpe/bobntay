@@ -9,9 +9,9 @@ class SongTable:
     def find_song(self, title: str, artist: str, release_title: str):
         from bnt_parser.models import Song
         return Song.objects.filter(
-            title__inexact=title,
-            artist__inexact=artist,
-            release__title__inexact=release_title
+            title__iexact=title,
+            artist__iexact=artist,
+            release__title__iexact=release_title
         ).first()
 
     def song_exists(self, title: str, artist: str, release_title: str) -> bool:
@@ -27,11 +27,11 @@ class SongTable:
 
         return song is not None
 
-    def save_if_not_exists(self, song_record: dict, album_object: dict) -> Song:
+    def save_if_not_exists(self, song_record: dict, album_object: Release) -> Song:
         existing_song = self.find_song(
             title=song_record['title'],
             artist=song_record['primary_artist']['name'],
-            release_title=album_object['title']
+            release_title=album_object.title
         )
         if existing_song:
             return existing_song.id
@@ -42,6 +42,7 @@ class SongTable:
             external_id=song_record['id'],
             endpoint=song_record['api_path'],
         )
+        song_source.save()
 
         from bnt_parser.models import Song
         song = Song(
@@ -49,7 +50,7 @@ class SongTable:
             artist=song_record['primary_artist']['name'],
             release=album_object,
             external_source=song_source,
-            writers=song_record['writer_artists'],
+            # writers=song_record['writer_artists'],
         )
         song.save()
         return song

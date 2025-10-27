@@ -58,7 +58,7 @@ REST_FRAMEWORK = {
 }
 
 CRONJOBS = [
-    ('0-59 * * * *', 'bnt_parser.cron.add_song')
+    ('0 * * * *', 'bnt_parser.cron.add_song')
 ]
 
 MIDDLEWARE = [

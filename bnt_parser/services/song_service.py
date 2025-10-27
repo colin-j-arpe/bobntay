@@ -88,16 +88,18 @@ class SongService:
         album_entry = self.genius_client.fetch_entry(path=self.genius_record['album']['api_path'])
         release = self.table_service.get_table('release').save_if_not_exists(album_entry)
 
-        # Save the songwriter(s)
-        writer_objects = []
-        for writer_data in self.genius_record['writer_artists']:
-            writer_objects.append(self.table_service.get_table('writer').save_if_not_exists(writer_data))
-
         # Save the song
         self.song_object = self.table_service.get_table('song').save_if_not_exists(
             song_record=self.genius_record,
             album_object=release,
         )
+
+        # Save the songwriter(s)
+        for writer_data in self.genius_record['writer_artists']:
+            self.table_service.get_table('writer').save_if_not_exists(
+                writer_data=writer_data,
+                song=self.song_object,
+            )
 
     def parse_sections(self):
         """
@@ -201,6 +203,6 @@ class SongService:
 
                 for word in self.parse_words(line):
                     self.table_service.get_table('word').save_if_not_exists(
-                        text=word,
+                        word=word,
                         line=line_object,
                     )

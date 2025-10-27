@@ -67,7 +67,7 @@ class GeniusClient:
                 break
 
             for hit in hits:
-                if hit['result']['type'] == 'song':
+                if hit['type'] == 'song':
                     yield hit['result']
 
             page += 1
