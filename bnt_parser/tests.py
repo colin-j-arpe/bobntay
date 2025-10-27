@@ -271,13 +271,16 @@ class SongServiceTestCase(TestCase):
             '[Chorus]',
             'First line of chorus',
             'Second line of chorus',
-            '', # Empty line should be ignored
-            'Third line of chorus',
+            '', # Empty line should start a new section labelled verse
+            'First standalone line',
+            'Second standalone line',
             '',
             '[Solo]', # Ignore empty section
             ''
             '[Verse 2]',
             'Line in second verse',
+            '[Verse 3]', # Section type should start a new section even without empty line
+            'Line in third verse',
             '',
             '[Outro]', # Ignore empty section
         ]
@@ -296,14 +299,28 @@ class SongServiceTestCase(TestCase):
                 'lines': [
                     'First line of chorus',
                     'Second line of chorus',
-                    'Third line of chorus',
+                ],
+            },
+            {
+                'type': '',
+                'song_order': 3,
+                'lines': [
+                    'First standalone line',
+                    'Second standalone line',
                 ],
             },
             {
                 'type': 'Verse',
-                'song_order': 3,
+                'song_order': 4,
                 'lines': [
                     'Line in second verse',
+                ],
+            },
+            {
+                'type': 'Verse',
+                'song_order': 5,
+                'lines': [
+                    'Line in third verse',
                 ],
             },
         ]
