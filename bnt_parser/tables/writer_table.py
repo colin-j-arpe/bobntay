@@ -35,7 +35,7 @@ class WriterTable():
         external_source = ExternalSourceTable().save(
             source=ExternalSource.SourceEnum.GENIUS,
             external_id=writer_data['id'],
-            endpoint=writer_data['url'],
+            endpoint=writer_data['api_path'],
         )
 
         writer = Writer(
