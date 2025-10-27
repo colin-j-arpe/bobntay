@@ -55,7 +55,7 @@ class ReleaseTable:
 
         album_source = ExternalSource(
             source=ExternalSource.SourceEnum.GENIUS,
-            external_id=release_data['album_id'],
+            external_id=release_data['id'],
             endpoint=release_data['api_path'],
         )
         album_source.save()

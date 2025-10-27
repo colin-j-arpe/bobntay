@@ -1,4 +1,4 @@
-from bnt_parser.models import Writer, ExternalSource
+from bnt_parser.models import Writer, ExternalSource, Song
 from bnt_parser.tables.external_source_table import ExternalSourceTable
 
 class WriterTable():
@@ -14,14 +14,14 @@ class WriterTable():
         :param name: The name of the writer.
         :return: The ID of the writer if it exists, None otherwise.
         """
-        writer = Writer.objects.filter(name__inexact=name).first()
+        writer = Writer.objects.filter(name__iexact=name).first()
 
         if writer is None:
             return None
 
         return writer
 
-    def save_if_not_exists(self, writer_data: {}) -> Writer:
+    def save_if_not_exists(self, writer_data: dict, song: Song) -> Writer:
         """
         Check if the writer exists in the DB; save new record if not.
 
@@ -42,6 +42,9 @@ class WriterTable():
             name=writer_data['name'],
             external_source=external_source,
         )
+        writer.save()
+
+        writer.songs.add(song)
         writer.save()
 
         return writer

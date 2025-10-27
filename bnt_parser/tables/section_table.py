@@ -14,10 +14,18 @@ class SectionTable:
         :param section_data: Object containing section data.
         :return: The saved Section object.
         """
+        if section_data['type'] in Section.SectionTypeEnum.labels:
+            try:
+                section_type = Section.SectionTypeEnum[section_data['type'].upper()]
+            except KeyError:
+                section_type = Section.SectionTypeEnum.VERSE
+        else:
+            section_type = Section.SectionTypeEnum.VERSE
+
         section = Section(
             song=song,
             order=section_data['song_order'],
-            type=section_data['type'],
+            type=section_type,
         )
         section.save()
 
