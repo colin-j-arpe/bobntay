@@ -6,7 +6,6 @@ from django.db import connections
 
 # Test API clients
 from bnt_parser.clients.genius_client import GeniusClient
-from bnt_parser.clients.musixmatch_client import MusixmatchClient
 from bnt_parser.models import ExternalSource
 from bnt_parser.services.song_service import SongService
 from bnt_parser.services.table_service import TableService
@@ -73,10 +72,8 @@ class SongServiceTestCase(TestCase):
         self.genius_client = GeniusClient()
         self.genius_url = 'https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics'
         self.genius_page = GeniusPage(url=self.genius_url)
-        self.musixmatch_client = MusixmatchClient()
         self.service = SongService(
             table_service=self.table_service,
-            musixmatch_client=self.musixmatch_client,
             genius_client=self.genius_client,
         )
 
@@ -167,7 +164,7 @@ class SongServiceTestCase(TestCase):
 
             assert self.service.artist == new_song['primary_artist_names'], "Expected artist name"
             assert self.service.title == new_song['title'], "Expected song title"
-            assert self.service.genius_record is not None, "Expected musixmatch record to be set"
+            assert self.service.genius_record is not None, "Expected Genius record to be set"
 
     def test_save_song(self):
         test_title = 'Test Song'
@@ -210,7 +207,6 @@ class SongServiceTestCase(TestCase):
         assert str(context.exception) == "Incomplete song data. Cannot save song.", "Cannot save without title, artist, and lyrics"
 
         self.service.lyrics = test_lyrics
-        self.service.musixmatch_record = test_album
         test_genius_entry = {
             'id': test_genius_entry_id,
             'api_path': f'/songs/{test_genius_entry_id}',
