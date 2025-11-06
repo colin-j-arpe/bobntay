@@ -47,7 +47,7 @@ class Song(models.Model):
     """
     title = models.CharField(max_length=255, blank=False)
     artist = models.CharField(max_length=127, blank=False)
-    release = models.ForeignKey(Release, on_delete=models.CASCADE, related_name='songs')
+    release = models.ForeignKey(Release, on_delete=models.CASCADE, related_name='songs', null=True)
     external_source = models.OneToOneField(ExternalSource, on_delete=models.CASCADE, blank=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -68,9 +68,13 @@ class Section(models.Model):
         VERSE = 'VERSE', 'Verse'
         PRECHORUS = 'PRECHORUS', 'Pre-Chorus'
         CHORUS = 'CHORUS', 'Chorus'
+        POSTCHORUS = 'POSTCHORUS', 'Post-Chorus'
         BRIDGE = 'BRIDGE', 'Bridge'
+        BREAKDOWN = 'BREAKDOWN', 'Breakdown'
+        SPOKEN = 'SPOKEN', 'Spoken'
         CODA = 'CODA', 'Coda'
         OUTRO = 'OUTRO', 'Outro'
+        OTHER = 'OTHER', 'Other'
 
     song = models.ForeignKey(Song, on_delete=models.CASCADE, related_name='sections')
     order = models.PositiveIntegerField(blank=False)

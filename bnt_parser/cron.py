@@ -15,7 +15,9 @@ def add_song():
         genius_client=gns_client
     )
 
+    print('Selecting song to add...')
     song_service.select_song()
+    print(f'Parsing {song_service.title} by {song_service.artist}')
     song_service.save_song()
     song_service.save_lyrics()
 

@@ -35,7 +35,7 @@ class GeniusClient:
         """
         page = 1
         url = f"{self.BASE_URL}/{PATHS['search']}"
-        writer = WRITERS[random.randrange(0, len(WRITERS) - 1)]
+        writer = WRITERS[random.randrange(0, len(WRITERS))]
         query_params = {
             'q': writer,
             'per_page': PAGE_SIZE,

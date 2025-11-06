@@ -1,5 +1,6 @@
 import logging
 import re
+from functools import reduce
 from re import Pattern
 
 from bnt_parser.clients.genius_client import GeniusClient
@@ -85,8 +86,11 @@ class SongService:
             raise ValueError("Incomplete song data. Cannot save song.")
 
         # Save the album
-        album_entry = self.genius_client.fetch_entry(path=self.genius_record['album']['api_path'])
-        release = self.table_service.get_table('release').save_if_not_exists(album_entry)
+        if self.genius_record['album'] is not None:
+            album_entry = self.genius_client.fetch_entry(path=self.genius_record['album']['api_path'])
+            release = self.table_service.get_table('release').save_if_not_exists(album_entry)
+        else:
+            release = None
 
         # Save the song
         self.song_object = self.table_service.get_table('song').save_if_not_exists(
@@ -112,7 +116,7 @@ class SongService:
 
         for line in self.lyrics:
             # Empty line indicates new section
-            if line.strip() == '' and len(section['lines']) > 0:
+            if line.strip() in ['', '|'] and len(section['lines']) > 0:
                 self.sections.append(section)
                 song_order += 1
                 section = self.new_section(song_order)
@@ -125,12 +129,10 @@ class SongService:
                     song_order += 1
                     section = self.new_section(song_order)
 
-                index_end = line.find(' ')
-                if index_end == -1:
-                    # If no space found, treat the whole line as a section type
-                    index_end = line.find(']')
-                section_type = line[1:index_end]
-                section['type'] = section_type
+                first_word_pattern = re.compile(r'^\[([\w-]+).*\]$')
+                section_type = first_word_pattern.match(line)
+
+                section['type'] = section_type.group(1) if section_type else ''
 
             else:
                 if len(line) > 0 and section is not None: # Do not add empty lines
@@ -192,10 +194,17 @@ class SongService:
         if not self.sections:
             raise ValueError("No sections to save. Cannot save lyrics.")
 
+        def extract_type(type_list: list[str], each_section: dict) -> list[str]:
+            type_list.append(each_section['type'])
+            return type_list
+        types: list[str] = reduce(extract_type, self.sections, [])
+        allow_other: bool = len(types) > 1 and not 'Verse' in types
+
         for section in self.sections:
             section_object = self.table_service.get_table('section').save(
                 song=self.song_object,
                 section_data=section,
+                multiple_sections=allow_other,
             )
 
             for line_order, line in enumerate(section['lines'], start=1):

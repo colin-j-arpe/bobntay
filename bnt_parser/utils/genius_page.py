@@ -28,10 +28,22 @@ class GeniusPage:
         :return:
         """
         page = BeautifulSoup(self.page_content, 'html.parser')
-        lyrics_div = page.find('div', attrs={'class': re.compile('Lyrics__Container')})
-        lyrics_header = lyrics_div.find('div', attrs={'class': re.compile('LyricsHeader__Container')})
-        lyrics_header.clear()
-        lines = lyrics_div.get_text(separator="\n")
-        lines = lines.split('\n')
+
+        def double_break(tag):
+            return tag.name == 'br' and tag.next_element.name == 'br'
+        lines = []
+        lyrics_divs = page.find_all('div', attrs={'class': re.compile('Lyrics__Container')})
+
+        for lyrics_div in lyrics_divs:
+            lyrics_header = lyrics_div.find('div', attrs={'class': re.compile('LyricsHeader__Container')})
+            if lyrics_header:
+                lyrics_header.extract()
+
+            line_breaks = lyrics_div.find_all(double_break)
+            for lb in line_breaks:
+               lb.replace_with(BeautifulSoup("<p>|</p>", 'html.parser'))
+
+            lyrics = lyrics_div.get_text(separator="\n")
+            lines = lines + lyrics.split('\n')
 
         return lines
