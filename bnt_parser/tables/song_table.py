@@ -6,7 +6,7 @@ class SongTable:
     This class is responsible for managing song data, including sections and lyrics.
     """
 
-    def find_song(self, title: str, artist: str, release_title: str):
+    def find_song(self, title: str, artist: str, release_title: str | None):
         from bnt_parser.models import Song
         return Song.objects.filter(
             title__iexact=title,
@@ -14,7 +14,7 @@ class SongTable:
             release__title__iexact=release_title
         ).first()
 
-    def song_exists(self, title: str, artist: str, release_title: str) -> bool:
+    def song_exists(self, title: str, artist: str, release_title: str | None) -> bool:
         """
         Check if a song exists in the database.
 
@@ -27,11 +27,12 @@ class SongTable:
 
         return song is not None
 
-    def save_if_not_exists(self, song_record: dict, album_object: Release) -> Song:
+    def save_if_not_exists(self, song_record: dict, album_object: Release | None) -> Song:
+        album_title = album_object.title if album_object else None
         existing_song = self.find_song(
             title=song_record['title'],
             artist=song_record['primary_artist']['name'],
-            release_title=album_object.title
+            release_title=album_title
         )
         if existing_song:
             return existing_song.id
@@ -50,7 +51,6 @@ class SongTable:
             artist=song_record['primary_artist']['name'],
             release=album_object,
             external_source=song_source,
-            # writers=song_record['writer_artists'],
         )
         song.save()
         return song
