@@ -1,12 +1,13 @@
 import json
-from unittest.mock import patch, call
+import os
+from unittest.mock import patch, call, MagicMock
 
 from django.test import TestCase
 from django.db import connections
 
 # Test API clients
 from bnt_parser.clients.genius_client import GeniusClient
-from bnt_parser.models import ExternalSource
+from bnt_parser.models import ExternalSource, Release, Song, Section, Line, Word, Writer
 from bnt_parser.services.song_service import SongService
 from bnt_parser.services.table_service import TableService
 from bnt_parser.tables.line_table import LineTable
@@ -40,22 +41,26 @@ class GeniusClientTestCase(TestCase):
         assert result['url'] == 'https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics', "Expected URL for the song"
 
 class GeniusPageTestCase(TestCase):
+    FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'buzzards_and_dreadful_crows.html')
+
     def setUp(self):
-        url = 'https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics'
-        self.page = GeniusPage(url=url)
-        pass
+        with open(self.FIXTURE_PATH, 'rb') as f:
+            fixture_content = f.read()
+        mock_response = MagicMock()
+        mock_response.content = fixture_content
+        with patch('bnt_parser.utils.genius_page.requests.get', return_value=mock_response):
+            self.page = GeniusPage(url='https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics')
 
     def tearDown(self):
         # Close any connections to the test database
         for connection in connections.all():
             if connection.connection:
                 connection.close()
-        pass
 
     def test_parse_page(self):
         results = self.page.lyrics()
 
-        assert len(results) == 26, "Expected 26 lines of lyrics"
+        assert len(results) == 29, "Expected 29 lines of lyrics"
         assert results[0][0] == '[', "First line should be a section header"
         assert results[-1] == 'You were the only one', "Last line of the song"
 
@@ -226,9 +231,9 @@ class SongServiceTestCase(TestCase):
             mock_fetch_entry.return_value = test_album
             mock_get_table.side_effect = [
                 self.release_table,
-                self.writer_table,
-                self.writer_table,
                 self.song_table,
+                self.writer_table,
+                self.writer_table,
             ]
             mock_release_table_save.return_value = test_release_object
             mock_writer_table_save.side_effect = test_writer_objects
@@ -239,11 +244,10 @@ class SongServiceTestCase(TestCase):
             mock_fetch_entry.assert_called_once_with(path=test_genius_entry['album']['api_path'])
 
             expected_get_table_calls = [
-                # call('external_source'),
                 call('release'),
-                call('writer'),
-                call('writer'),
                 call('song'),
+                call('writer'),
+                call('writer'),
             ]
             mock_get_table.assert_has_calls(expected_get_table_calls)
             assert mock_get_table.call_count == 4, "Expected four calls to access different tables"
@@ -251,8 +255,8 @@ class SongServiceTestCase(TestCase):
             mock_release_table_save.assert_called_once_with(test_album)
 
             expected_writer_calls = [
-                call(test_writers[0]),
-                call(test_writers[1]),
+                call(writer_data=test_writers[0], song=test_song_id),
+                call(writer_data=test_writers[1], song=test_song_id),
             ]
             mock_writer_table_save.assert_has_calls(expected_writer_calls)
             assert mock_writer_table_save.call_count == 2, "Expected two calls to save writers"
@@ -464,10 +468,12 @@ class SongServiceTestCase(TestCase):
                 call(
                     song=test_song_object,
                     section_data=test_section_data[0],
+                    multiple_sections=False,
                 ),
                 call(
                     song=test_song_object,
                     section_data=test_section_data[1],
+                    multiple_sections=False,
                 ),
             ]
 
@@ -549,3 +555,431 @@ class TableServiceTestCase(TestCase):
         with self.assertRaises(ValueError) as context:
             self.table_service.get_table('invalid_table')
         assert str(context.exception) == "Table 'invalid_table' is not recognised.", "Expected ValueError for invalid table"
+
+
+# ============================================================
+# Table Tests
+# ============================================================
+
+class ExternalSourceTableTestCase(TestCase):
+    def setUp(self):
+        self.table = ExternalSourceTable()
+
+    def test_save(self):
+        source = self.table.save(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=123,
+            endpoint='/songs/123',
+        )
+        assert source.pk is not None, "ExternalSource should have a DB ID after save"
+        assert source.source == ExternalSource.SourceEnum.GENIUS
+        assert source.external_id == 123
+        assert source.endpoint == '/songs/123'
+
+    def test_song_exists_true(self):
+        ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=456,
+            endpoint='/songs/456',
+        )
+        assert self.table.song_exists(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=456,
+            url='/songs/456',
+        ) is True
+
+    def test_song_exists_false_wrong_id(self):
+        ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=789,
+            endpoint='/songs/789',
+        )
+        assert self.table.song_exists(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=999,
+            url='/songs/789',
+        ) is False
+
+    def test_song_exists_false_wrong_endpoint(self):
+        ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=101,
+            endpoint='/songs/101',
+        )
+        assert self.table.song_exists(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=101,
+            url='/songs/different',
+        ) is False
+
+
+class ReleaseTableTestCase(TestCase):
+    def setUp(self):
+        self.table = ReleaseTable()
+
+    def _make_release(self, external_id=1, title='Test Album', artist='Test Artist'):
+        ext = ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=external_id,
+            endpoint=f'/albums/{external_id}',
+        )
+        return Release.objects.create(
+            title=title,
+            artist=artist,
+            release_date='2020-01-01',
+            label='Test Label',
+            external_source=ext,
+        )
+
+    # NOTE: test_get_release_by_title_* will fail because get_release_by_title
+    # uses 'inexact' (an invalid Django lookup) instead of 'iexact'.
+    def test_get_release_by_title_exists(self):
+        self._make_release(title='Alien Lanes', artist='Guided by Voices')
+        result = self.table.get_release_by_title(title='alien lanes', artist='guided by voices')
+        assert result is not None, "Should find release with case-insensitive match"
+        assert result.title == 'Alien Lanes'
+
+    def test_get_release_by_title_not_found(self):
+        result = self.table.get_release_by_title(title='Does Not Exist', artist='Nobody')
+        assert result is None, "Should return None when no release matches"
+
+    def test_get_release_by_source_exists(self):
+        self._make_release(external_id=42)
+        result = self.table.get_release_by_source(external_id=42)
+        assert result is not None, "Should find release by external_id"
+
+    def test_get_release_by_source_not_found(self):
+        result = self.table.get_release_by_source(external_id=9999)
+        assert result is None, "Should return None when no release has that external_id"
+
+    def test_save_if_not_exists_new_release(self):
+        release_data = {
+            'id': 201,
+            'api_path': '/albums/201',
+            'primary_artist_names': 'Guided by Voices',
+            'name': 'Bee Thousand',
+            'release_date': '1994-06-21',
+            'label': 'Scat Records',
+        }
+        release = self.table.save_if_not_exists(release_data)
+        assert release.pk is not None
+        assert release.title == 'Bee Thousand'
+        assert release.artist == 'Guided by Voices'
+        assert Release.objects.filter(pk=release.pk).exists()
+
+    def test_save_if_not_exists_existing_release(self):
+        self._make_release(external_id=202, title='Bee Thousand')
+        release_data = {
+            'id': 202,
+            'api_path': '/albums/202',
+            'primary_artist_names': 'Guided by Voices',
+            'name': 'Bee Thousand',
+            'release_date': '1994-06-21',
+        }
+        self.table.save_if_not_exists(release_data)
+        assert Release.objects.filter(external_source__external_id=202).count() == 1, \
+            "Should not create a duplicate release"
+
+
+class SongTableTestCase(TestCase):
+    def setUp(self):
+        self.table = SongTable()
+
+    def _make_external_source(self, external_id=1, endpoint=None):
+        return ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=external_id,
+            endpoint=endpoint or f'/songs/{external_id}',
+        )
+
+    def _make_release(self, external_id=100, title='Test Album', artist='Test Artist'):
+        ext = ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=external_id,
+            endpoint=f'/albums/{external_id}',
+        )
+        return Release.objects.create(
+            title=title,
+            artist=artist,
+            release_date='2020-01-01',
+            label='',
+            external_source=ext,
+        )
+
+    def _make_song(self, external_id=1, title='Test Song', artist='Test Artist', release=None):
+        ext = self._make_external_source(external_id=external_id)
+        return Song.objects.create(
+            title=title,
+            artist=artist,
+            release=release,
+            external_source=ext,
+        )
+
+    def test_find_song_exists(self):
+        self._make_song(title='Buzzards and Dreadful Crows', artist='Guided by Voices')
+        result = self.table.find_song(
+            title='buzzards and dreadful crows',
+            artist='guided by voices',
+            release_title=None,
+        )
+        assert result is not None, "Should find song with case-insensitive match"
+
+    def test_find_song_with_release(self):
+        release = self._make_release(title='Bee Thousand')
+        self._make_song(external_id=2, title='Echos Myron', artist='Guided by Voices', release=release)
+        result = self.table.find_song(
+            title='Echos Myron',
+            artist='Guided by Voices',
+            release_title='Bee Thousand',
+        )
+        assert result is not None, "Should find song when release title matches"
+
+    def test_find_song_not_found(self):
+        result = self.table.find_song(title='Unknown Song', artist='Nobody', release_title=None)
+        assert result is None, "Should return None when no song matches"
+
+    def test_song_exists_true(self):
+        self._make_song(title='Motor Away', artist='Guided by Voices')
+        assert self.table.song_exists(
+            title='Motor Away', artist='Guided by Voices', release_title=None
+        ) is True
+
+    def test_song_exists_false(self):
+        assert self.table.song_exists(
+            title='Nonexistent', artist='Nobody', release_title=None
+        ) is False
+
+    def test_save_if_not_exists_new_song(self):
+        song_record = {
+            'id': 501,
+            'api_path': '/songs/501',
+            'title': 'Glad Girls',
+            'primary_artist': {'name': 'Guided by Voices'},
+        }
+        song = self.table.save_if_not_exists(song_record=song_record, album_object=None)
+        assert song.pk is not None
+        assert song.title == 'Glad Girls'
+        assert song.artist == 'Guided by Voices'
+        assert song.release is None
+        assert Song.objects.filter(pk=song.pk).exists()
+
+    def test_save_if_not_exists_existing_song(self):
+        self._make_song(external_id=502, title='Glad Girls', artist='Guided by Voices')
+        song_record = {
+            'id': 999,
+            'api_path': '/songs/999',
+            'title': 'Glad Girls',
+            'primary_artist': {'name': 'Guided by Voices'},
+        }
+        self.table.save_if_not_exists(song_record=song_record, album_object=None)
+        assert Song.objects.filter(
+            title__iexact='Glad Girls', artist__iexact='Guided by Voices'
+        ).count() == 1, "Should not create a duplicate song"
+
+
+class SectionTableTestCase(TestCase):
+    def setUp(self):
+        self.table = SectionTable()
+        ext = ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=1,
+            endpoint='/songs/1',
+        )
+        self.song = Song.objects.create(
+            title='Test Song',
+            artist='Test Artist',
+            external_source=ext,
+        )
+
+    def test_save_known_type(self):
+        section = self.table.save(
+            song=self.song,
+            section_data={'type': 'Chorus', 'song_order': 1},
+        )
+        assert section.pk is not None
+        assert section.type == Section.SectionTypeEnum.CHORUS
+        assert section.order == 1
+
+    def test_save_type_case_insensitive(self):
+        section = self.table.save(
+            song=self.song,
+            section_data={'type': 'verse', 'song_order': 2},
+        )
+        assert section.type == Section.SectionTypeEnum.VERSE
+
+    def test_save_type_strips_special_chars(self):
+        # "Pre-Chorus" → strip non-word chars → "PRECHORUS" → matches PRECHORUS enum
+        section = self.table.save(
+            song=self.song,
+            section_data={'type': 'Pre-Chorus', 'song_order': 3},
+        )
+        assert section.type == Section.SectionTypeEnum.PRECHORUS
+
+    def test_save_unknown_type_single_section(self):
+        section = self.table.save(
+            song=self.song,
+            section_data={'type': 'Funk', 'song_order': 4},
+            multiple_sections=False,
+        )
+        assert section.type == Section.SectionTypeEnum.VERSE, \
+            "Unknown type with multiple_sections=False should default to VERSE"
+
+    def test_save_unknown_type_multiple_sections(self):
+        section = self.table.save(
+            song=self.song,
+            section_data={'type': 'Funk', 'song_order': 5},
+            multiple_sections=True,
+        )
+        assert section.type == Section.SectionTypeEnum.OTHER, \
+            "Unknown type with multiple_sections=True should default to OTHER"
+
+    def test_save_order(self):
+        section = self.table.save(
+            song=self.song,
+            section_data={'type': 'Verse', 'song_order': 7},
+        )
+        assert section.order == 7
+
+
+class LineTableTestCase(TestCase):
+    def setUp(self):
+        self.table = LineTable()
+        ext = ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=1,
+            endpoint='/songs/1',
+        )
+        song = Song.objects.create(
+            title='Test Song',
+            artist='Test Artist',
+            external_source=ext,
+        )
+        self.section = Section.objects.create(
+            song=song,
+            order=1,
+            type=Section.SectionTypeEnum.VERSE,
+        )
+
+    def test_save(self):
+        line = self.table.save(
+            lyrics='The lifeblood, the lighthouse flashing',
+            order=1,
+            section=self.section,
+        )
+        assert line.pk is not None
+        assert line.lyrics == 'The lifeblood, the lighthouse flashing'
+        assert line.order == 1
+        assert line.section == self.section
+
+
+class WordTableTestCase(TestCase):
+    def setUp(self):
+        self.table = WordTable()
+        ext = ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=1,
+            endpoint='/songs/1',
+        )
+        song = Song.objects.create(
+            title='Test Song',
+            artist='Test Artist',
+            external_source=ext,
+        )
+        section = Section.objects.create(
+            song=song,
+            order=1,
+            type=Section.SectionTypeEnum.VERSE,
+        )
+        self.line = Line.objects.create(
+            lyrics='Test line of lyrics',
+            order=1,
+            section=section,
+        )
+
+    def test_find_word_exists(self):
+        Word.objects.create(text='buzzards')
+        result = self.table.find_word('buzzards')
+        assert result is not None
+        assert result.text == 'buzzards'
+
+    def test_find_word_not_found(self):
+        result = self.table.find_word('nonexistent')
+        assert result is None
+
+    def test_find_word_case_sensitive(self):
+        Word.objects.create(text='Buzzards')
+        result = self.table.find_word('buzzards')
+        assert result is None, "find_word should be case-sensitive"
+
+    def test_save_if_not_exists_new_word(self):
+        word = self.table.save_if_not_exists(text='dreadful', line=self.line)
+        assert word.pk is not None
+        assert word.text == 'dreadful'
+        assert self.line in word.line.all(), "Line should be associated with the word"
+
+    def test_save_if_not_exists_existing_word(self):
+        existing_word = Word.objects.create(text='crows')
+        word = self.table.save_if_not_exists(text='crows', line=self.line)
+        assert word.pk == existing_word.pk, "Should reuse existing word"
+        assert self.line in word.line.all(), "Line should be added to existing word"
+        assert Word.objects.filter(text='crows').count() == 1, "Should not create a duplicate word"
+
+
+class WriterTableTestCase(TestCase):
+    def setUp(self):
+        self.table = WriterTable()
+        ext = ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=1,
+            endpoint='/songs/1',
+        )
+        self.song = Song.objects.create(
+            title='Test Song',
+            artist='Test Artist',
+            external_source=ext,
+        )
+
+    def test_get_writer_by_name_exists(self):
+        ext = ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=10,
+            endpoint='/artists/10',
+        )
+        Writer.objects.create(name='Robert Pollard', external_source=ext)
+        result = self.table.get_writer_by_name('robert pollard')
+        assert result is not None, "Should find writer with case-insensitive match"
+        assert result.name == 'Robert Pollard'
+
+    def test_get_writer_by_name_not_found(self):
+        result = self.table.get_writer_by_name('Nobody')
+        assert result is None
+
+    def test_save_if_not_exists_new_writer(self):
+        writer_data = {
+            'name': 'Robert Pollard',
+            'id': 11,
+            'api_path': '/artists/11',
+        }
+        writer = self.table.save_if_not_exists(writer_data=writer_data, song=self.song)
+        assert writer.pk is not None
+        assert writer.name == 'Robert Pollard'
+        assert self.song in writer.songs.all(), "Song should be associated with the writer"
+        assert writer.external_source.external_id == 11
+
+    def test_save_if_not_exists_existing_writer(self):
+        ext = ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=12,
+            endpoint='/artists/12',
+        )
+        existing_writer = Writer.objects.create(name='Tobin Sprout', external_source=ext)
+        writer_data = {
+            'name': 'Tobin Sprout',
+            'id': 12,
+            'api_path': '/artists/12',
+        }
+        writer = self.table.save_if_not_exists(writer_data=writer_data, song=self.song)
+        assert writer.pk == existing_writer.pk, "Should return existing writer"
+        assert self.song in writer.songs.all(), "Song should be added to existing writer"
+        assert Writer.objects.filter(name='Tobin Sprout').count() == 1, \
+            "Should not create a duplicate writer"
