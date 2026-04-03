@@ -35,7 +35,7 @@ class SongTable:
             release_title=album_title
         )
         if existing_song:
-            return existing_song.id
+            return existing_song
 
         from bnt_parser.models import ExternalSource
         song_source = ExternalSource(

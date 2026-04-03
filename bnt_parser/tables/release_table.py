@@ -15,8 +15,8 @@ class ReleaseTable:
         :return: True if the release exists, False otherwise.
         """
         release = Release.objects.filter(
-            title__inexact=title,
-            artist__inexact=artist
+            title__iexact=title,
+            artist__iexact=artist
         ).first()
         
         if release is None:

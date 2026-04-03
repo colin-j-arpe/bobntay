@@ -216,6 +216,6 @@ class SongService:
 
                 for word in self.parse_words(line):
                     self.table_service.get_table('word').save_if_not_exists(
-                        word=word,
+                        text=word,
                         line=line_object,
                     )
