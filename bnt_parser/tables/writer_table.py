@@ -30,6 +30,7 @@ class WriterTable():
         """
         existing_writer = self.get_writer_by_name(writer_data['name'])
         if existing_writer is not None:
+            existing_writer.songs.add(song)
             return existing_writer
 
         external_source = ExternalSourceTable().save(
