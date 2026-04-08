@@ -17,7 +17,7 @@ def add_song():
 
     print('Selecting song to add...')
     song_service.select_song()
-    print(f'Parsing {song_service.title} by {song_service.artist}')
+    print(f'Parsing {song_service.title} by {song_service.artist}; found {len(song_service.lyrics)} lines.')
     song_service.save_song()
     song_service.save_lyrics()
 
