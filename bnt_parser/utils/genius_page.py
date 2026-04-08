@@ -20,10 +20,13 @@ class GeniusPage:
         Fetches the content of the Genius page.
         This method should be implemented to retrieve the actual content from the URL.
         """
-        raw_page = requests.get(self.url)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+        raw_page = requests.get(self.url, headers=headers)
         logging.info(f"Fetch page content resulted in {raw_page.status_code} status")
         if raw_page.status_code != 200:
-            logging.error(f"Failed to fetch page content from {self.url} with status code {raw_page.status_code}")
+            logging.error(f"Failed to fetch page content from {self.url} with status code {raw_page.status_code}: {raw_page.json()}")
             raise Exception(f"Failed to fetch page content from {self.url} with status code {raw_page.status_code}")
         self.page_content = raw_page.content
 
