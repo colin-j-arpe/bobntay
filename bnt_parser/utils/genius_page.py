@@ -1,3 +1,4 @@
+import logging
 import re
 import requests
 from html.parser import HTMLParser
@@ -20,6 +21,7 @@ class GeniusPage:
         This method should be implemented to retrieve the actual content from the URL.
         """
         raw_page = requests.get(self.url)
+        logging.info(f"Fetch page content resulted in {raw_page.status_code} status")
         self.page_content = raw_page.content
 
     def lyrics(self):
@@ -33,6 +35,7 @@ class GeniusPage:
             return tag.name == 'br' and tag.next_element.name == 'br'
         lines = []
         lyrics_divs = page.find_all('div', attrs={'class': re.compile('Lyrics__Container')})
+        logging.info(f"Page contains {len(lyrics_divs)} lyrics divs")
 
         for lyrics_div in lyrics_divs:
             lyrics_header = lyrics_div.find('div', attrs={'class': re.compile('LyricsHeader__Container')})
@@ -45,5 +48,6 @@ class GeniusPage:
 
             lyrics = lyrics_div.get_text(separator="\n")
             lines = lines + lyrics.split('\n')
+            logging.info(f"arsed {len(lines)} lines so far...")
 
         return lines
