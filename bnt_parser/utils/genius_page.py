@@ -22,6 +22,9 @@ class GeniusPage:
         """
         raw_page = requests.get(self.url)
         logging.info(f"Fetch page content resulted in {raw_page.status_code} status")
+        if raw_page.status_code != 200:
+            logging.error(f"Failed to fetch page content from {self.url} with status code {raw_page.status_code}")
+            raise Exception(f"Failed to fetch page content from {self.url} with status code {raw_page.status_code}")
         self.page_content = raw_page.content
 
     def lyrics(self):
