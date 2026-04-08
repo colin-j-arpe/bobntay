@@ -69,9 +69,11 @@ class SongService:
         self.genius_record = genius_entry
         genius_page = GeniusPage(track_data['url'])
         self.lyrics = genius_page.lyrics()
+        logging.info(f'Parsed {len(self.lyrics)} lines')
 
         self.title = track_data['title']
         self.artist = track_data['primary_artist_names']
+        logging.info(f'Recording {self.artist} as artist, {self.title} as title')
 
         return True
 
