@@ -5,9 +5,12 @@ from html.parser import HTMLParser
 from bs4 import BeautifulSoup
 
 class GeniusPage:
-    def __init__(self, url: str):
+    def __init__(self, url: str, html: bytes | None = None):
         self.url = url
-        self.fetchContent()
+        if html is not None:
+            self.page_content = html
+        else:
+            self.fetchContent()
 
     # def __repr__(self):
     #     return f"GeniusPage(name={self.name}, url={self.url})"

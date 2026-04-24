@@ -58,7 +58,8 @@ REST_FRAMEWORK = {
 }
 
 CRONJOBS = [
-    ('0 * * * *', 'bnt_parser.cron.add_song')
+    # Disabled: song ingestion is handled by the local-machine fetch script.
+    # ('0 * * * *', 'bnt_parser.cron.add_song')
 ]
 
 MIDDLEWARE = [

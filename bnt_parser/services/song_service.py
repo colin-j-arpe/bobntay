@@ -56,6 +56,48 @@ class SongService:
 
         return self
 
+    def find_next_track(self) -> dict | None:
+        """
+        Find the next unprocessed track and fetch its full Genius record.
+        Returns a dict with 'track' and 'genius_record' keys, or None if no new song is found.
+        Used by the GET endpoint so the local script can fetch the page HTML.
+        """
+        for track in self.genius_client.get_next_song():
+            if track is None:
+                break
+
+            if self.table_service.get_table('external_source').song_exists(
+                api=ExternalSource.SourceEnum.GENIUS,
+                id=track['id'],
+                url=track['api_path'],
+            ):
+                continue
+
+            genius_entry = self.genius_client.fetch_entry(path=track['api_path'])
+            if genius_entry is None:
+                continue
+
+            return {
+                'track': track,
+                'genius_record': genius_entry,
+            }
+
+        return None
+
+    def load_prefetched(self, track_data: dict, genius_record: dict, html: bytes) -> None:
+        """
+        Load song data from pre-fetched HTML and pre-fetched Genius record.
+        Used by the POST endpoint after the local script has fetched the page HTML.
+        """
+        self.genius_record = genius_record
+        genius_page = GeniusPage(track_data['url'], html=html)
+        self.lyrics = genius_page.lyrics()
+        logging.info(f'Parsed {len(self.lyrics)} lines')
+
+        self.title = track_data['title']
+        self.artist = track_data['primary_artist_names']
+        logging.info(f'Recording {self.artist} as artist, {self.title} as title')
+
     def fetch_genius_page(self, track_data: dict) -> bool:
         """
         Fetch the Genius page for the selected song.
