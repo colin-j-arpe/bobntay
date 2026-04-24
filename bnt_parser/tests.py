@@ -47,6 +47,7 @@ class GeniusPageTestCase(TestCase):
         with open(self.FIXTURE_PATH, 'rb') as f:
             fixture_content = f.read()
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.content = fixture_content
         with patch('bnt_parser.utils.genius_page.requests.get', return_value=mock_response):
             self.page = GeniusPage(url='https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics')
@@ -125,8 +126,10 @@ class SongServiceTestCase(TestCase):
 
         with (
             patch.object(GeniusClient, 'get_next_song') as mock_get_next_song,
+            patch.object(GeniusClient, 'fetch_entry', return_value=new_song_genius_entry),
             patch.object(TableService, 'get_table') as mock_get_table,
             patch.object(ExternalSourceTable, 'song_exists') as mock_song_exists,
+            patch.object(GeniusPage, 'fetchContent'),
             patch.object(GeniusPage, 'lyrics') as mock_lyrics,
         ):
             # Configure the mock to return a generator of song data
@@ -535,6 +538,282 @@ class SongServiceTestCase(TestCase):
             assert mock_word_save.call_count == 16, "Expected sixteen calls to save words"
 
             pass
+
+class GeniusPagePrefetchedTestCase(TestCase):
+    """Tests for GeniusPage when pre-fetched HTML is provided via the html parameter."""
+    FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'buzzards_and_dreadful_crows.html')
+
+    def setUp(self):
+        with open(self.FIXTURE_PATH, 'rb') as f:
+            self.fixture_content = f.read()
+
+    def tearDown(self):
+        for connection in connections.all():
+            if connection.connection:
+                connection.close()
+
+    def test_prefetched_html_bypasses_fetch(self):
+        with patch('bnt_parser.utils.genius_page.requests.get') as mock_get:
+            page = GeniusPage(url='https://genius.com/test', html=self.fixture_content)
+            mock_get.assert_not_called()
+            assert page.page_content == self.fixture_content
+
+    def test_prefetched_html_lyrics_parsed(self):
+        page = GeniusPage(url='https://genius.com/test', html=self.fixture_content)
+        results = page.lyrics()
+        assert len(results) == 29, "Expected 29 lines of lyrics"
+        assert results[0][0] == '[', "First line should be a section header"
+        assert results[-1] == 'You were the only one', "Last line of the song"
+
+
+class FindNextTrackTestCase(TestCase):
+    def setUp(self):
+        self.external_source_table = ExternalSourceTable()
+        self.service = SongService(
+            table_service=TableService(),
+            genius_client=GeniusClient(),
+        )
+        self.existing_song = {
+            'title': 'Existing Song',
+            'primary_artist_names': 'Artist',
+            'id': 1111,
+            'api_path': '/songs/1111',
+            'url': 'https://genius.com/artist-existing-song-lyrics',
+        }
+        self.new_song = {
+            'title': 'New Song',
+            'primary_artist_names': 'Artist',
+            'id': 2222,
+            'api_path': '/songs/2222',
+            'url': 'https://genius.com/artist-new-song-lyrics',
+        }
+        self.genius_record = {
+            'id': 2222,
+            'writer_artists': [],
+        }
+
+    def tearDown(self):
+        for connection in connections.all():
+            if connection.connection:
+                connection.close()
+
+    def test_skips_existing_returns_new(self):
+        with (
+            patch.object(GeniusClient, 'get_next_song', return_value=iter([self.existing_song, self.new_song, None])),
+            patch.object(TableService, 'get_table', return_value=self.external_source_table),
+            patch.object(ExternalSourceTable, 'song_exists', side_effect=[True, False]),
+            patch.object(GeniusClient, 'fetch_entry', return_value=self.genius_record),
+        ):
+            result = self.service.find_next_track()
+            assert result is not None
+            assert result['track'] == self.new_song
+            assert result['genius_record'] == self.genius_record
+
+    def test_returns_none_when_all_songs_exist(self):
+        with (
+            patch.object(GeniusClient, 'get_next_song', return_value=iter([self.existing_song, None])),
+            patch.object(TableService, 'get_table', return_value=self.external_source_table),
+            patch.object(ExternalSourceTable, 'song_exists', return_value=True),
+        ):
+            result = self.service.find_next_track()
+            assert result is None
+
+    def test_skips_track_when_fetch_entry_fails(self):
+        with (
+            patch.object(GeniusClient, 'get_next_song', return_value=iter([self.new_song, None])),
+            patch.object(TableService, 'get_table', return_value=self.external_source_table),
+            patch.object(ExternalSourceTable, 'song_exists', return_value=False),
+            patch.object(GeniusClient, 'fetch_entry', return_value=None),
+        ):
+            result = self.service.find_next_track()
+            assert result is None
+
+
+class LoadPrefetchedTestCase(TestCase):
+    FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'buzzards_and_dreadful_crows.html')
+
+    def setUp(self):
+        with open(self.FIXTURE_PATH, 'rb') as f:
+            self.html = f.read()
+        self.service = SongService(
+            table_service=TableService(),
+            genius_client=GeniusClient(),
+        )
+        self.track_data = {
+            'title': 'Buzzards and Dreadful Crows',
+            'primary_artist_names': 'Guided by Voices',
+            'url': 'https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics',
+            'api_path': '/songs/12345',
+        }
+        self.genius_record = {
+            'id': 12345,
+            'writer_artists': [{'name': 'Robert Pollard'}],
+        }
+
+    def tearDown(self):
+        for connection in connections.all():
+            if connection.connection:
+                connection.close()
+
+    def test_sets_service_state(self):
+        self.service.load_prefetched(
+            track_data=self.track_data,
+            genius_record=self.genius_record,
+            html=self.html,
+        )
+        assert self.service.title == self.track_data['title']
+        assert self.service.artist == self.track_data['primary_artist_names']
+        assert self.service.genius_record == self.genius_record
+        assert len(self.service.lyrics) == 29
+
+    def test_no_http_calls(self):
+        with patch('bnt_parser.utils.genius_page.requests.get') as mock_get:
+            self.service.load_prefetched(
+                track_data=self.track_data,
+                genius_record=self.genius_record,
+                html=self.html,
+            )
+            mock_get.assert_not_called()
+
+
+class NextSongViewTestCase(TestCase):
+    API_KEY = 'test-api-key-123'
+
+    def setUp(self):
+        self.track_data = {
+            'title': 'New Song',
+            'primary_artist_names': 'Artist',
+            'id': 2222,
+            'api_path': '/songs/2222',
+            'url': 'https://genius.com/artist-new-song-lyrics',
+        }
+        self.genius_record = {'id': 2222, 'writer_artists': []}
+
+    def tearDown(self):
+        for connection in connections.all():
+            if connection.connection:
+                connection.close()
+
+    def test_returns_track_with_valid_key(self):
+        find_result = {'track': self.track_data, 'genius_record': self.genius_record}
+        with (
+            patch.dict('os.environ', {'PARSE_API_KEY': self.API_KEY}),
+            patch.object(SongService, 'find_next_track', return_value=find_result),
+        ):
+            response = self.client.get('/parse/next-song/', HTTP_X_API_KEY=self.API_KEY)
+            assert response.status_code == 200
+            data = response.json()
+            assert data['track'] == self.track_data
+            assert data['genius_record'] == self.genius_record
+
+    def test_returns_403_without_key(self):
+        with patch.dict('os.environ', {'PARSE_API_KEY': self.API_KEY}):
+            response = self.client.get('/parse/next-song/')
+            assert response.status_code == 403
+
+    def test_returns_403_with_wrong_key(self):
+        with patch.dict('os.environ', {'PARSE_API_KEY': self.API_KEY}):
+            response = self.client.get('/parse/next-song/', HTTP_X_API_KEY='wrong-key')
+            assert response.status_code == 403
+
+    def test_returns_404_when_no_new_songs(self):
+        with (
+            patch.dict('os.environ', {'PARSE_API_KEY': self.API_KEY}),
+            patch.object(SongService, 'find_next_track', return_value=None),
+        ):
+            response = self.client.get('/parse/next-song/', HTTP_X_API_KEY=self.API_KEY)
+            assert response.status_code == 404
+
+
+class SubmitPageViewTestCase(TestCase):
+    API_KEY = 'test-api-key-123'
+    FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'buzzards_and_dreadful_crows.html')
+
+    def setUp(self):
+        with open(self.FIXTURE_PATH, 'r', encoding='utf-8') as f:
+            self.html_content = f.read()
+        self.track_data = {
+            'title': 'Buzzards and Dreadful Crows',
+            'primary_artist_names': 'Guided by Voices',
+            'url': 'https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics',
+            'api_path': '/songs/12345',
+        }
+        self.genius_record = {'id': 12345, 'writer_artists': [{'name': 'Robert Pollard'}]}
+
+    def tearDown(self):
+        for connection in connections.all():
+            if connection.connection:
+                connection.close()
+
+    def _post(self, data=None, key=None):
+        headers = {'HTTP_X_API_KEY': key} if key else {}
+        return self.client.post(
+            '/parse/submit-page/',
+            data=json.dumps(data or {}),
+            content_type='application/json',
+            **headers,
+        )
+
+    def test_saves_song_with_valid_data(self):
+        with (
+            patch.dict('os.environ', {'PARSE_API_KEY': self.API_KEY}),
+            patch('bnt_parser.views.SongService') as MockSongService,
+        ):
+            mock_service = MagicMock()
+            mock_service.title = self.track_data['title']
+            mock_service.artist = self.track_data['primary_artist_names']
+            MockSongService.return_value = mock_service
+
+            response = self._post(
+                data={
+                    'track_data': self.track_data,
+                    'genius_record': self.genius_record,
+                    'html': self.html_content,
+                },
+                key=self.API_KEY,
+            )
+
+            assert response.status_code == 200
+            mock_service.load_prefetched.assert_called_once_with(
+                track_data=self.track_data,
+                genius_record=self.genius_record,
+                html=self.html_content.encode('utf-8'),
+            )
+            mock_service.save_song.assert_called_once()
+            mock_service.save_lyrics.assert_called_once()
+            assert 'Buzzards and Dreadful Crows' in response.json()['detail']
+
+    def test_returns_400_when_fields_missing(self):
+        with patch.dict('os.environ', {'PARSE_API_KEY': self.API_KEY}):
+            response = self._post(
+                data={'track_data': self.track_data},
+                key=self.API_KEY,
+            )
+            assert response.status_code == 400
+
+    def test_returns_403_without_key(self):
+        with patch.dict('os.environ', {'PARSE_API_KEY': self.API_KEY}):
+            response = self._post(
+                data={
+                    'track_data': self.track_data,
+                    'genius_record': self.genius_record,
+                    'html': self.html_content,
+                },
+            )
+            assert response.status_code == 403
+
+    def test_returns_403_with_wrong_key(self):
+        with patch.dict('os.environ', {'PARSE_API_KEY': self.API_KEY}):
+            response = self._post(
+                data={
+                    'track_data': self.track_data,
+                    'genius_record': self.genius_record,
+                    'html': self.html_content,
+                },
+                key='wrong-key',
+            )
+            assert response.status_code == 403
+
 
 class TableServiceTestCase(TestCase):
     def setUp(self):
