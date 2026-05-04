@@ -99,7 +99,7 @@ DATABASES = {
     'default': dj_database_url.parse(
         os.getenv('DATABASE_URL'),
         conn_max_age=600,
-        ssl_require=True,
+        ssl_require=os.getenv('DB_SSL', 'False') == 'True',
     )
 }
 
@@ -139,6 +139,11 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Maximum size of a request body (bytes). Raised to accommodate large HTML
+# pages submitted by the fetch script (default Django value is 2.5 MB).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024  # 5 MB
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
