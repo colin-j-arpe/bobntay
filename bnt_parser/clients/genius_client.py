@@ -8,10 +8,7 @@ import requests
 PATHS = {
     'search': 'search',
 }
-WRITERS = [
-    'robert pollard',
-    'taylor swift',
-]
+WRITERS = [w.strip() for w in os.getenv('GENIUS_WRITERS', 'robert pollard,taylor swift').split(',')]
 PAGE_SIZE = 50
 
 class GeniusClient:

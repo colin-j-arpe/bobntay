@@ -5,24 +5,37 @@
 # Genius lyrics page from the local machine (bypassing server-side bot
 # detection), and submits the HTML back to the server for parsing and storage.
 #
-# Configuration is read from ~/.config/bobntay/.env, which must contain:
-#   SERVER_URL     - Base URL of the remote server, e.g. https://example.com
-#   PARSE_API_KEY  - API key matching PARSE_API_KEY on the server
+# Configuration is loaded from the first .env file found in this order:
+#   1. ~/.config/bobntay/.env  (user-level override, keeps secrets out of the repo)
+#   2. <repo-root>/.env        (project .env, suitable for local Docker installs)
+#
+# The file must contain:
+#   SERVER_URL     - Base URL of the app, e.g. https://bobntay.example.com
+#                    or http://localhost:8000 for a local Docker instance
+#   PARSE_API_KEY  - Secret key matching PARSE_API_KEY in the app's environment
 #
 # Suggested cron entry (runs hourly, logs to file):
-#   0 * * * * /home/colin/Documents/python/bobntay/scripts/fetch_song.sh \
+#   0 * * * * /path/to/repo/scripts/fetch_song.sh \
 #     >> ~/.local/logs/bobntay_fetch.log 2>&1
 
 set -euo pipefail
 
-CONFIG_FILE="${HOME}/.config/bobntay/.env"
-if [ -f "$CONFIG_FILE" ]; then
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+USER_CONFIG="${HOME}/.config/bobntay/.env"
+PROJECT_ENV="${REPO_ROOT}/.env"
+
+if [ -f "$USER_CONFIG" ]; then
     # shellcheck source=/dev/null
-    source "$CONFIG_FILE"
+    source "$USER_CONFIG"
+elif [ -f "$PROJECT_ENV" ]; then
+    # shellcheck source=/dev/null
+    source "$PROJECT_ENV"
 fi
 
-SERVER_URL="${SERVER_URL:?SERVER_URL not set. Add it to ${CONFIG_FILE}}"
-PARSE_API_KEY="${PARSE_API_KEY:?PARSE_API_KEY not set. Add it to ${CONFIG_FILE}}"
+SERVER_URL="${SERVER_URL:?SERVER_URL not set. Add it to ${USER_CONFIG} or ${PROJECT_ENV}}"
+PARSE_API_KEY="${PARSE_API_KEY:?PARSE_API_KEY not set. Add it to ${USER_CONFIG} or ${PROJECT_ENV}}"
 
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
