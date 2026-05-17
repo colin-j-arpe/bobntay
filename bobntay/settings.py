@@ -37,6 +37,7 @@ ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '').split(',')
 INSTALLED_APPS = [
     # BobnTay apps
     'bnt_parser',
+    'bnt_searcher',
 
     # Third-party apps
     'rest_framework',

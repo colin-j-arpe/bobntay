@@ -20,4 +20,5 @@ from django.urls import path, include
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('parse/', include('bnt_parser.urls')),
+    path('search/', include('bnt_searcher.urls')),
 ]
