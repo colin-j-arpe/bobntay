@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from bnt_parser.models import Line, Word
+from bnt_searcher.services.variant_service import get_variants
 
 
 def _format_word_text(text):
@@ -47,12 +48,18 @@ class WordSearchView(APIView):
         primary_writers = request.GET.getlist('primary_writer')
         co_writers = request.GET.getlist('co_writer')
         section_types = [t.upper() for t in request.GET.getlist('section_type')]
-        # variants param accepted but not yet implemented
+        include_variants = request.GET.get('variants', '').lower() == 'true'
         try:
             page = max(1, int(request.GET.get('page', 1)))
             page_size = max(1, min(50, int(request.GET.get('page_size', 20))))
         except (ValueError, TypeError):
             return Response({'detail': '"page" and "page_size" must be integers.'}, status=400)
+
+        if include_variants:
+            variant_texts = get_variants(search_term)
+            all_terms = [search_term] + variant_texts
+        else:
+            all_terms = [search_term]
 
         word_obj = Word.objects.filter(text=search_term).first()
         word_data = {
@@ -60,12 +67,13 @@ class WordSearchView(APIView):
             'text': _format_word_text(search_term),
         }
 
-        if word_obj is None:
+        matching_words = Word.objects.filter(text__in=all_terms)
+        if not matching_words.exists():
             return Response(_empty_response(word_data, page, page_size))
 
         lines_qs = (
             Line.objects
-            .filter(words=word_obj)
+            .filter(words__in=matching_words)
             .select_related('section', 'section__song')
             .prefetch_related('section__song__writers')
             .order_by('section__song_id', 'section__order', 'order')

@@ -3,7 +3,6 @@ import os
 from unittest.mock import patch, call, MagicMock
 
 from django.test import TestCase
-from django.db import connections
 
 # Test API clients
 from bnt_parser.clients.genius_client import GeniusClient
@@ -18,19 +17,10 @@ from bnt_parser.tables.song_table import SongTable
 from bnt_parser.tables.word_table import WordTable
 from bnt_parser.tables.writer_table import WriterTable
 from bnt_parser.utils.genius_page import GeniusPage
-import dj_database_url
 
 class GeniusClientTestCase(TestCase):
     def setUp(self):
         self.client = GeniusClient()
-        pass
-
-    def tearDown(self):
-        # Close any connections to the test database
-        for connection in connections.all():
-            if connection.connection:
-                connection.close()
-        pass
 
     def test_search_songs(self):
         artist = 'Guided by Voices'
@@ -51,12 +41,6 @@ class GeniusPageTestCase(TestCase):
         mock_response.content = fixture_content
         with patch('bnt_parser.utils.genius_page.requests.get', return_value=mock_response):
             self.page = GeniusPage(url='https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics')
-
-    def tearDown(self):
-        # Close any connections to the test database
-        for connection in connections.all():
-            if connection.connection:
-                connection.close()
 
     def test_parse_page(self):
         results = self.page.lyrics()
@@ -82,12 +66,6 @@ class SongServiceTestCase(TestCase):
             table_service=self.table_service,
             genius_client=self.genius_client,
         )
-
-    def tearDown(self):
-        # Close any connections to the test database
-        for connection in connections.all():
-            if connection.connection:
-                connection.close()
 
     def test_select_song(self):
         existing_song_external_id = 1234
@@ -547,11 +525,6 @@ class GeniusPagePrefetchedTestCase(TestCase):
         with open(self.FIXTURE_PATH, 'rb') as f:
             self.fixture_content = f.read()
 
-    def tearDown(self):
-        for connection in connections.all():
-            if connection.connection:
-                connection.close()
-
     def test_prefetched_html_bypasses_fetch(self):
         with patch('bnt_parser.utils.genius_page.requests.get') as mock_get:
             page = GeniusPage(url='https://genius.com/test', html=self.fixture_content)
@@ -591,11 +564,6 @@ class FindNextTrackTestCase(TestCase):
             'id': 2222,
             'writer_artists': [],
         }
-
-    def tearDown(self):
-        for connection in connections.all():
-            if connection.connection:
-                connection.close()
 
     def test_skips_existing_returns_new(self):
         with (
@@ -650,11 +618,6 @@ class LoadPrefetchedTestCase(TestCase):
             'writer_artists': [{'name': 'Robert Pollard'}],
         }
 
-    def tearDown(self):
-        for connection in connections.all():
-            if connection.connection:
-                connection.close()
-
     def test_sets_service_state(self):
         self.service.load_prefetched(
             track_data=self.track_data,
@@ -688,11 +651,6 @@ class NextSongViewTestCase(TestCase):
             'url': 'https://genius.com/artist-new-song-lyrics',
         }
         self.genius_record = {'id': 2222, 'writer_artists': []}
-
-    def tearDown(self):
-        for connection in connections.all():
-            if connection.connection:
-                connection.close()
 
     def test_returns_track_with_valid_key(self):
         find_result = {'track': self.track_data, 'genius_record': self.genius_record}
@@ -739,11 +697,6 @@ class SubmitPageViewTestCase(TestCase):
             'api_path': '/songs/12345',
         }
         self.genius_record = {'id': 12345, 'writer_artists': [{'name': 'Robert Pollard'}]}
-
-    def tearDown(self):
-        for connection in connections.all():
-            if connection.connection:
-                connection.close()
 
     def _post(self, data=None, key=None):
         headers = {'HTTP_X_API_KEY': key} if key else {}
@@ -818,14 +771,6 @@ class SubmitPageViewTestCase(TestCase):
 class TableServiceTestCase(TestCase):
     def setUp(self):
         self.table_service = TableService()
-        pass
-
-    def tearDown(self):
-        # Close any connections to the test database
-        for connection in connections.all():
-            if connection.connection:
-                connection.close()
-        pass
 
     def test_get_table(self):
         song_table = self.table_service.get_table('song')
