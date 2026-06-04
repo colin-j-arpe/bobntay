@@ -25,10 +25,28 @@ class GeniusClientTestCase(TestCase):
     def test_search_songs(self):
         artist = 'Guided by Voices'
         title = 'Buzzards and Dreadful Crows'
-        result = self.client.search(artist=artist, title=title)
+        expected_url = 'https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics'
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            'response': {
+                'hits': [
+                    {
+                        'type': 'song',
+                        'result': {
+                            'title': title,
+                            'primary_artist': {'name': artist},
+                            'url': expected_url,
+                        },
+                    }
+                ]
+            }
+        }
+        with patch('bnt_parser.clients.genius_client.requests.get', return_value=mock_response):
+            result = self.client.search(artist=artist, title=title)
 
         assert result is not None, "Expected a result from Genius API"
-        assert result['url'] == 'https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics', "Expected URL for the song"
+        assert result['url'] == expected_url, "Expected URL for the song"
 
 class GeniusPageTestCase(TestCase):
     FIXTURE_PATH = os.path.join(os.path.dirname(__file__), 'fixtures', 'buzzards_and_dreadful_crows.html')
@@ -61,7 +79,6 @@ class SongServiceTestCase(TestCase):
         self.writer_table = WriterTable()
         self.genius_client = GeniusClient()
         self.genius_url = 'https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics'
-        self.genius_page = GeniusPage(url=self.genius_url)
         self.service = SongService(
             table_service=self.table_service,
             genius_client=self.genius_client,
