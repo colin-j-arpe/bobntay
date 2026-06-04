@@ -8,12 +8,13 @@ logger = logging.getLogger(__name__)
 _BASE_URL = "https://www.dictionaryapi.com/api/v3/references/collegiate/json"
 
 
-def fetch_inflections(word: str) -> list[str]:
+def fetch_inflections(word: str) -> tuple[str | None, list[str]]:
     """
-    Call the M-W Collegiate Dictionary API for *word* and return a list of
-    unique inflected forms (e.g. plurals, past tenses, conjugations).
+    Call the M-W Collegiate Dictionary API for *word* and return a tuple of
+    (headword, inflections), where headword is the canonical stem from
+    meta.stems[0] and inflections is a list of unique inflected forms.
 
-    Returns an empty list if the API is unreachable, returns no entries, or
+    Returns (None, []) if the API is unreachable, returns no entries, or
     returns a suggestion list (strings) rather than entry objects.
     """
     api_key = os.environ["MW_API_KEY"]
@@ -24,14 +25,19 @@ def fetch_inflections(word: str) -> list[str]:
         response.raise_for_status()
     except requests.RequestException:
         logger.exception("M-W API request failed for word=%r", word)
-        return []
+        return None, []
 
     data = response.json()
 
     # M-W returns a list of strings (spelling suggestions) when the word is not
     # found — nothing useful for us.
     if not data or not isinstance(data[0], dict):
-        return []
+        return None, []
+
+    stems = data[0].get("meta", {}).get("stems", [])
+    headword: str | None = None
+    if stems:
+        headword = stems[0].replace("\u00b7", "").replace("*", "").strip() or None
 
     inflections: list[str] = []
     for entry in data:
@@ -42,4 +48,4 @@ def fetch_inflections(word: str) -> list[str]:
             if form and form not in inflections:
                 inflections.append(form)
 
-    return inflections
+    return headword, inflections
