@@ -75,10 +75,14 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'bobntay.urls'
 
+# Serve the built React app from bnt_frontend/dist when it exists.
+# In development, the Vite dev server (port 5173) is used instead.
+_FRONTEND_DIST = BASE_DIR / 'bnt_frontend' / 'dist'
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [_FRONTEND_DIST] if _FRONTEND_DIST.exists() else [],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -141,6 +145,8 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+# Include the built React app's assets so collectstatic picks them up.
+STATICFILES_DIRS = [_FRONTEND_DIST] if _FRONTEND_DIST.exists() else []
 
 # Maximum size of a request body (bytes). Raised to accommodate large HTML
 # pages submitted by the fetch script (default Django value is 2.5 MB).
