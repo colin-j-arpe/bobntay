@@ -14,6 +14,7 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+from django.conf import settings
 from django.contrib import admin
 from django.urls import path, include, re_path
 from django.views.generic import TemplateView
@@ -22,6 +23,11 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('parse/', include('bnt_parser.urls')),
     path('search/', include('bnt_searcher.urls')),
-    # Catch-all: serve the React SPA for any route not claimed by Django.
-    re_path(r'^(?!admin/|parse/|search/).*$', TemplateView.as_view(template_name='index.html')),
 ]
+
+# Only add the React SPA catch-all when the built frontend is present.
+# Without it, hitting / would raise TemplateDoesNotExist and return a 500.
+if (settings.BASE_DIR / 'bnt_frontend' / 'dist').exists():
+    urlpatterns.append(
+        re_path(r'^(?!admin/|parse/|search/).*$', TemplateView.as_view(template_name='index.html'))
+    )
