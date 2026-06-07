@@ -36,7 +36,7 @@ class ImmediateResizeObserver {
   disconnect(): void {}
 }
 
-global.ResizeObserver = ImmediateResizeObserver as unknown as typeof ResizeObserver
+globalThis.ResizeObserver = ImmediateResizeObserver as unknown as typeof ResizeObserver
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
