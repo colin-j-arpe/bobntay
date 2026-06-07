@@ -210,3 +210,6 @@ __marimo__/
 
 bnt_env/
 .idea/
+
+# Frontend
+bnt_frontend/node_modules/
