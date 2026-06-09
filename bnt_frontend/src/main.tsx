@@ -13,7 +13,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <QueryClientProvider client={queryClient}>
-        <MantineProvider>
+        <MantineProvider defaultColorScheme="dark">
           <App />
         </MantineProvider>
       </QueryClientProvider>
