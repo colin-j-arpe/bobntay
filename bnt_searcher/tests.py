@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import requests
 from django.test import TestCase
 
-from bnt_parser.models import ExternalSource, Line, Section, Song, Word
+from bnt_parser.models import ExternalSource, Line, Section, Song, Word, Writer
 from bnt_searcher.clients.mw_client import fetch_inflections
 from bnt_searcher.models import WordVariant, WordVariantAlias, WordVariantLookup
 from bnt_searcher.services.variant_service import get_variants
@@ -336,3 +336,47 @@ class WordSearchVariantsViewTestCase(TestCase):
 
         data = response.json()
         assert data['data']['word']['text'] == 'run'
+
+
+# ---------------------------------------------------------------------------
+# WriterListView
+# ---------------------------------------------------------------------------
+
+class WriterListViewTestCase(TestCase):
+    def _make_writer(self, name, external_id):
+        ext = ExternalSource.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=external_id,
+            endpoint=f'/writers/{external_id}',
+        )
+        return Writer.objects.create(name=name, external_source=ext)
+
+    def setUp(self):
+        self._patch = patch('bnt_searcher.views.PRIMARY_WRITERS', ['Robert Pollard', 'Taylor Swift'])
+        self._patch.start()
+        self._make_writer('Robert Pollard', 1001)
+        self._make_writer('Taylor Swift', 1002)
+        self._make_writer('Jack Antonoff', 1003)
+        self._make_writer('Annie Clark', 1004)
+
+    def tearDown(self):
+        self._patch.stop()
+
+    def test_returns_200(self):
+        response = self.client.get('/search/writers/')
+        assert response.status_code == 200
+
+    def test_excludes_primary_writers(self):
+        response = self.client.get('/search/writers/')
+        writers = response.json()['writers']
+        assert 'Robert Pollard' not in writers
+        assert 'Taylor Swift' not in writers
+
+    def test_returns_names_sorted_alphabetically(self):
+        response = self.client.get('/search/writers/')
+        assert response.json()['writers'] == ['Annie Clark', 'Jack Antonoff']
+
+    def test_returns_empty_list_when_no_co_writers_exist(self):
+        Writer.objects.all().delete()
+        response = self.client.get('/search/writers/')
+        assert response.json() == {'writers': []}

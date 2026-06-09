@@ -55,7 +55,14 @@ export default function ResultsPage() {
   return (
     <Container size="lg" py="xl">
       <Group mb="lg" align="baseline">
-        <Button variant="subtle" onClick={() => navigate(-1)}>
+        <Button
+          variant="subtle"
+          onClick={() => {
+            const back = new URLSearchParams(urlParams)
+            back.delete('page')
+            navigate(`/?${back.toString()}`)
+          }}
+        >
           ← Back
         </Button>
         <Title order={2}>

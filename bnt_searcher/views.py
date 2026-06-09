@@ -1,3 +1,4 @@
+import os
 from collections import defaultdict
 
 from django.db.models import Q
@@ -5,7 +6,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from bnt_parser.models import Line, Word
+from bnt_parser.models import Line, Word, Writer
 from bnt_searcher.services.variant_service import get_variants
 
 
@@ -35,6 +36,29 @@ def _empty_response(word_data, page, page_size):
             'next_page_url': None,
         },
     }
+
+
+PRIMARY_WRITERS = [
+    name.strip()
+    for name in os.environ.get('GENIUS_WRITERS', 'Robert Pollard,Taylor Swift').split(',')
+    if name.strip()
+]
+
+
+class WriterListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        exclude_q = Q()
+        for name in PRIMARY_WRITERS:
+            exclude_q |= Q(name__iexact=name)
+        names = (
+            Writer.objects
+            .exclude(exclude_q)
+            .order_by('name')
+            .values_list('name', flat=True)
+        )
+        return Response({'writers': list(names)})
 
 
 class WordSearchView(APIView):

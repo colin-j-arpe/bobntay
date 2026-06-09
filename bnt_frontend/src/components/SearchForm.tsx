@@ -1,7 +1,14 @@
-import { TextInput, MultiSelect, TagsInput, Switch, Select, Button, Stack, Group } from '@mantine/core'
+import { useMemo, useState } from 'react'
+import { TextInput, Checkbox, MultiSelect, Switch, Select, Button, Stack, Group } from '@mantine/core'
 import { useForm } from '@mantine/form'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useWriters } from '../api/writers'
 import type { SearchFormValues } from '../types/api'
+
+function fuzzyFilter(name: string, query: string): boolean {
+  const lower = name.toLowerCase()
+  return [...query.toLowerCase()].every((ch) => lower.includes(ch))
+}
 
 const SECTION_TYPE_OPTIONS = [
   { value: 'INTRO', label: 'Intro' },
@@ -26,15 +33,28 @@ const PAGE_SIZE_OPTIONS = ['10', '20', '50']
 
 export default function SearchForm() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const { data: writers, isLoading: isLoadingWriters } = useWriters()
+  const [writerSearch, setWriterSearch] = useState('')
 
+  const filteredWriters = useMemo(() => {
+    if (!writers) return []
+    if (!writerSearch) return writers
+    return writers.filter((name) => fuzzyFilter(name, writerSearch))
+  }, [writers, writerSearch])
+
+  // Seed from URL when returning from results; default primary_writer to all on fresh visit.
+  const hasWord = searchParams.has('word')
   const form = useForm<SearchFormValues>({
     initialValues: {
-      word: '',
-      variants: false,
-      section_type: [],
-      primary_writer: [],
-      co_writer: [],
-      page_size: '20',
+      word: searchParams.get('word') ?? '',
+      variants: searchParams.get('variants') === 'true',
+      section_type: searchParams.getAll('section_type'),
+      primary_writer: hasWord
+        ? searchParams.getAll('primary_writer')
+        : PRIMARY_WRITER_OPTIONS.map((o) => o.value),
+      co_writer: searchParams.getAll('co_writer'),
+      page_size: searchParams.get('page_size') ?? '20',
     },
     validate: {
       word: (v) => (v.trim() ? null : 'Search term is required'),
@@ -62,13 +82,13 @@ export default function SearchForm() {
           {...form.getInputProps('word')}
         />
 
-        <MultiSelect
-          label="Primary writer"
-          placeholder="All writers"
-          data={PRIMARY_WRITER_OPTIONS}
-          clearable
-          {...form.getInputProps('primary_writer')}
-        />
+        <Checkbox.Group label="Primary writer" {...form.getInputProps('primary_writer')}>
+          <Stack gap="xs" mt="xs">
+            {PRIMARY_WRITER_OPTIONS.map((opt) => (
+              <Checkbox key={opt.value} value={opt.value} label={opt.label} />
+            ))}
+          </Stack>
+        </Checkbox.Group>
 
         <MultiSelect
           label="Section type"
@@ -78,11 +98,15 @@ export default function SearchForm() {
           {...form.getInputProps('section_type')}
         />
 
-        <TagsInput
+        <MultiSelect
           label="Co-writer"
-          description="Press Enter after each name"
-          placeholder="e.g. Jack Antonoff"
-          splitChars={[',']}
+          placeholder={isLoadingWriters ? 'Loading…' : 'Search writers…'}
+          data={filteredWriters}
+          searchable
+          searchValue={writerSearch}
+          onSearchChange={setWriterSearch}
+          clearable
+          disabled={isLoadingWriters}
           {...form.getInputProps('co_writer')}
         />
 
