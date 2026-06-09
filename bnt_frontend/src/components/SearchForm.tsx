@@ -1,7 +1,14 @@
-import { TextInput, Checkbox, MultiSelect, TagsInput, Switch, Select, Button, Stack, Group } from '@mantine/core'
+import { useMemo, useState } from 'react'
+import { TextInput, Checkbox, MultiSelect, Switch, Select, Button, Stack, Group } from '@mantine/core'
 import { useForm } from '@mantine/form'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useWriters } from '../api/writers'
 import type { SearchFormValues } from '../types/api'
+
+function fuzzyFilter(name: string, query: string): boolean {
+  const lower = name.toLowerCase()
+  return [...query.toLowerCase()].every((ch) => lower.includes(ch))
+}
 
 const SECTION_TYPE_OPTIONS = [
   { value: 'INTRO', label: 'Intro' },
@@ -27,6 +34,14 @@ const PAGE_SIZE_OPTIONS = ['10', '20', '50']
 export default function SearchForm() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const { data: writers, isLoading: isLoadingWriters } = useWriters()
+  const [writerSearch, setWriterSearch] = useState('')
+
+  const filteredWriters = useMemo(() => {
+    if (!writers) return []
+    if (!writerSearch) return writers
+    return writers.filter((name) => fuzzyFilter(name, writerSearch))
+  }, [writers, writerSearch])
 
   // Seed from URL when returning from results; default primary_writer to all on fresh visit.
   const hasWord = searchParams.has('word')
@@ -83,11 +98,15 @@ export default function SearchForm() {
           {...form.getInputProps('section_type')}
         />
 
-        <TagsInput
+        <MultiSelect
           label="Co-writer"
-          description="Press Enter after each name"
-          placeholder="e.g. Jack Antonoff"
-          splitChars={[',']}
+          placeholder={isLoadingWriters ? 'Loading…' : 'Search writers…'}
+          data={filteredWriters}
+          searchable
+          searchValue={writerSearch}
+          onSearchChange={setWriterSearch}
+          clearable
+          disabled={isLoadingWriters}
           {...form.getInputProps('co_writer')}
         />
 

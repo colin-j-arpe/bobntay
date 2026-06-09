@@ -1,11 +1,16 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { MantineProvider } from '@mantine/core'
 import { describe, it, expect, vi } from 'vitest'
 import SearchForm from '../components/SearchForm'
 
-function Wrapper({ children }: { children: React.ReactNode }) {
+vi.mock('../api/writers', () => ({
+  useWriters: () => ({ data: ['Annie Clark', 'Jack Antonoff', 'St. Vincent'], isLoading: false }),
+}))
+
+function Wrapper({ children }: { children: ReactNode }) {
   return (
     <MemoryRouter initialEntries={['/']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <MantineProvider>{children}</MantineProvider>
@@ -47,6 +52,28 @@ describe('SearchForm', () => {
   it('renders the section type selector', () => {
     render(<SearchForm />, { wrapper: Wrapper })
     expect(screen.getByText(/section type/i)).toBeInTheDocument()
+  })
+
+  it('renders the co-writer selector', () => {
+    render(<SearchForm />, { wrapper: Wrapper })
+    expect(screen.getByText(/co-writer/i)).toBeInTheDocument()
+  })
+
+  it('includes co_writer in the URL when a writer is selected', async () => {
+    const user = userEvent.setup()
+    const onNavigate = vi.fn()
+    renderWithRouter(onNavigate)
+
+    await user.type(screen.getByRole('textbox', { name: /search word/i }), 'love')
+
+    const coWriterInput = screen.getByRole('textbox', { name: /co-writer/i })
+    await user.click(coWriterInput)
+    await user.click(screen.getByText('Jack Antonoff'))
+
+    await user.click(screen.getByRole('button', { name: /search/i }))
+
+    await waitFor(() => expect(onNavigate).toHaveBeenCalled())
+    expect(onNavigate.mock.calls[0][0]).toContain('co_writer=Jack+Antonoff')
   })
 
   it('renders the variants toggle', () => {
