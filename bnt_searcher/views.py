@@ -113,8 +113,10 @@ class WordSearchView(APIView):
             lines_qs = lines_qs.filter(q)
 
         if co_writers:
+            q = Q()
             for cw in co_writers:
-                lines_qs = lines_qs.filter(section__song__writers__name__icontains=cw)
+                q |= Q(section__song__writers__name__icontains=cw)
+            lines_qs = lines_qs.filter(q)
 
         lines_qs = lines_qs.distinct()
 
