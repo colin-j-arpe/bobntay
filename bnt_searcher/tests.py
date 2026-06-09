@@ -23,6 +23,15 @@ def _make_song(title='Test Song', artist='Test Artist', external_id=1):
     return Song.objects.create(title=title, artist=artist, external_source=ext)
 
 
+def _make_writer(name, external_id):
+    ext = ExternalSource.objects.create(
+        source=ExternalSource.SourceEnum.GENIUS,
+        external_id=external_id,
+        endpoint=f'/writers/{external_id}',
+    )
+    return Writer.objects.create(name=name, external_source=ext)
+
+
 def _make_word(text, song=None):
     """Create a Word and optionally attach it to a line in a new song."""
     word = Word.objects.create(text=text)
@@ -343,21 +352,13 @@ class WordSearchVariantsViewTestCase(TestCase):
 # ---------------------------------------------------------------------------
 
 class WriterListViewTestCase(TestCase):
-    def _make_writer(self, name, external_id):
-        ext = ExternalSource.objects.create(
-            source=ExternalSource.SourceEnum.GENIUS,
-            external_id=external_id,
-            endpoint=f'/writers/{external_id}',
-        )
-        return Writer.objects.create(name=name, external_source=ext)
-
     def setUp(self):
         self._patch = patch('bnt_searcher.views.PRIMARY_WRITERS', ['Robert Pollard', 'Taylor Swift'])
         self._patch.start()
-        self._make_writer('Robert Pollard', 1001)
-        self._make_writer('Taylor Swift', 1002)
-        self._make_writer('Jack Antonoff', 1003)
-        self._make_writer('Annie Clark', 1004)
+        _make_writer('Robert Pollard', 1001)
+        _make_writer('Taylor Swift', 1002)
+        _make_writer('Jack Antonoff', 1003)
+        _make_writer('Annie Clark', 1004)
 
     def tearDown(self):
         self._patch.stop()
@@ -380,3 +381,41 @@ class WriterListViewTestCase(TestCase):
         Writer.objects.all().delete()
         response = self.client.get('/search/writers/')
         assert response.json() == {'writers': []}
+
+
+# ---------------------------------------------------------------------------
+# WordSearchView — co_writer filter (OR logic)
+# ---------------------------------------------------------------------------
+
+class CoWriterFilterTestCase(TestCase):
+    def setUp(self):
+        self.song_a = _make_song(title='Song A', artist='Artist', external_id=10)
+        self.song_b = _make_song(title='Song B', artist='Artist', external_id=11)
+        _make_word('love', song=self.song_a)
+        _make_word('love', song=self.song_b)
+        writer_a = _make_writer('Alice Cooper', 2001)
+        writer_b = _make_writer('Bob Dylan', 2002)
+        writer_a.songs.add(self.song_a)
+        writer_b.songs.add(self.song_b)
+
+    def test_single_co_writer_returns_matching_song(self):
+        response = self.client.get('/search/word/', {'word': 'love', 'co_writer': 'Alice Cooper'})
+        titles = [r['title'] for r in response.json()['data']['results']]
+        assert titles == ['Song A']
+
+    def test_multiple_co_writers_returns_all_matching_songs(self):
+        response = self.client.get(
+            '/search/word/',
+            {'word': 'love', 'co_writer': ['Alice Cooper', 'Bob Dylan']},
+        )
+        titles = [r['title'] for r in response.json()['data']['results']]
+        assert 'Song A' in titles
+        assert 'Song B' in titles
+
+    def test_multiple_co_writers_does_not_require_all_on_same_song(self):
+        """Regression: chained .filter() would exclude songs missing any one co-writer."""
+        response = self.client.get(
+            '/search/word/',
+            {'word': 'love', 'co_writer': ['Alice Cooper', 'Bob Dylan']},
+        )
+        assert response.json()['meta']['total_songs'] == 2
