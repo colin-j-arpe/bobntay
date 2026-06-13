@@ -78,7 +78,7 @@ export default function ResultsPage() {
 
       {isError && (
         <Alert color="red" title="Error">
-          {(error as Error).message}
+          {(error).message}
         </Alert>
       )}
 

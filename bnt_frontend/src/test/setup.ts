@@ -22,13 +22,13 @@ class ImmediateResizeObserver {
             width: 1280, height: 800,
             top: 0, left: 0, bottom: 800, right: 1280, x: 0, y: 0,
             toJSON: () => ({}),
-          } as DOMRectReadOnly,
+          },
           borderBoxSize:              [{ blockSize: 800, inlineSize: 1280 }] as ReadonlyArray<ResizeObserverSize>,
           contentBoxSize:             [{ blockSize: 800, inlineSize: 1280 }] as ReadonlyArray<ResizeObserverSize>,
           devicePixelContentBoxSize:  [{ blockSize: 800, inlineSize: 1280 }] as ReadonlyArray<ResizeObserverSize>,
-        } as ResizeObserverEntry,
+        },
       ],
-      this as unknown as ResizeObserver,
+      this,
     )
   }
 
@@ -36,7 +36,7 @@ class ImmediateResizeObserver {
   disconnect(): void {}
 }
 
-globalThis.ResizeObserver = ImmediateResizeObserver as unknown as typeof ResizeObserver
+globalThis.ResizeObserver = ImmediateResizeObserver
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

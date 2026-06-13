@@ -32,7 +32,7 @@ vi.mock('mantine-datatable', () => ({
                 <td key={col.accessor}>
                   {col.render
                     ? col.render(record)
-                    : String(record[col.accessor] ?? '')}
+                    : String((record[col.accessor] as string | number | boolean | null | undefined) ?? '')}
                 </td>
               ))}
             </tr>
