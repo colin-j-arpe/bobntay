@@ -1,4 +1,4 @@
-from bnt_parser.models import Section, Line
+from bnt_parser.models import Line, Section
 
 
 class LineTable:

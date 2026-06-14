@@ -1,7 +1,7 @@
 from bnt_parser.clients.genius_client import GeniusClient
-from bnt_parser.clients.musixmatch_client import MusixmatchClient
 from bnt_parser.services.song_service import SongService
 from bnt_parser.services.table_service import TableService
+
 
 def add_song():
     """
@@ -10,14 +10,12 @@ def add_song():
     """
     table_service = TableService()
     gns_client = GeniusClient()
-    song_service = SongService(
-        table_service=table_service,
-        genius_client=gns_client
-    )
+    song_service = SongService(table_service=table_service, genius_client=gns_client)
 
-    print('Selecting song to add...')
+    print("Selecting song to add...")
     song_service.select_song()
-    print(f'Parsing {song_service.title} by {song_service.artist}; found {len(song_service.lyrics)} lines.')
+    line_count = len(song_service.lyrics)
+    print(f"Parsing {song_service.title} by {song_service.artist}; found {line_count} lines.")
     song_service.save_song()
     song_service.save_lyrics()
 

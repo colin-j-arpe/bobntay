@@ -1,7 +1,8 @@
-from bnt_parser.models import Writer, ExternalSource, Song
+from bnt_parser.models import ExternalSource, Song, Writer
 from bnt_parser.tables.external_source_table import ExternalSourceTable
 
-class WriterTable():
+
+class WriterTable:
     """
     Class representing the writer table in the database.
     This class is responsible for managing writer data.
@@ -28,19 +29,19 @@ class WriterTable():
         :param writer_data: Object from Genius API.
         :return: The saved Writer DB ID.
         """
-        existing_writer = self.get_writer_by_name(writer_data['name'])
+        existing_writer = self.get_writer_by_name(writer_data["name"])
         if existing_writer is not None:
             existing_writer.songs.add(song)
             return existing_writer
 
         external_source = ExternalSourceTable().save(
             source=ExternalSource.SourceEnum.GENIUS,
-            external_id=writer_data['id'],
-            endpoint=writer_data['api_path'],
+            external_id=writer_data["id"],
+            endpoint=writer_data["api_path"],
         )
 
         writer = Writer(
-            name=writer_data['name'],
+            name=writer_data["name"],
             external_source=external_source,
         )
         writer.save()

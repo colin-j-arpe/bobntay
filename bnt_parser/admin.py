@@ -1,5 +1,6 @@
 from django.contrib import admin
-from .models import ExternalSource, Release, Song, Section, Writer, Line, Word
+
+from .models import ExternalSource, Line, Release, Section, Song, Word, Writer
 
 admin.site.register(ExternalSource)
 admin.site.register(Release)
