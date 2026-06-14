@@ -1,4 +1,5 @@
-from bnt_parser.models import Word, Line
+from bnt_parser.models import Line, Word
+
 
 class WordTable:
     def find_word(self, word: str) -> Word | None:
@@ -9,6 +10,7 @@ class WordTable:
         :return: The Word object if found, else None.
         """
         from bnt_parser.models import Word
+
         return Word.objects.filter(text=word).first()
 
     def save_if_not_exists(self, text: str, line: Line) -> Word:

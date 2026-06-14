@@ -1,5 +1,7 @@
 import re
+
 from bnt_parser.models import Section, Song
+
 
 class SectionTable:
     """
@@ -7,7 +9,7 @@ class SectionTable:
     This class is responsible for managing section data.
     """
 
-    def save(self, song: Song, section_data: dict, multiple_sections = False) -> Section:
+    def save(self, song: Song, section_data: dict, multiple_sections=False) -> Section:
         """
         Save a new section record in the DB.
 
@@ -17,8 +19,8 @@ class SectionTable:
         :return: The saved Section object.
         """
         # Default to Verse if type is not recognized
-        non_letter_pattern = re.compile('\\W')
-        type_input = non_letter_pattern.sub('', section_data['type'].upper())
+        non_letter_pattern = re.compile("\\W")
+        type_input = non_letter_pattern.sub("", section_data["type"].upper())
         if type_input in Section.SectionTypeEnum.names:
             try:
                 section_type = Section.SectionTypeEnum[type_input]
@@ -31,7 +33,7 @@ class SectionTable:
 
         section = Section(
             song=song,
-            order=section_data['song_order'],
+            order=section_data["song_order"],
             type=section_type,
         )
         section.save()

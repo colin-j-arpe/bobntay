@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from bnt_searcher.clients.mw_client import fetch_inflections
 from bnt_searcher.models import WordVariant, WordVariantAlias, WordVariantLookup
@@ -18,11 +18,11 @@ def get_variants(search_term: str) -> list[str]:
 
     Returns an empty list when M-W has no inflections for the term.
     """
-    alias = WordVariantAlias.objects.filter(
-        searched_term=search_term
-    ).select_related('lookup').first()
+    alias = (
+        WordVariantAlias.objects.filter(searched_term=search_term).select_related("lookup").first()
+    )
     if alias is not None:
-        return list(alias.lookup.variants.values_list('text', flat=True))
+        return list(alias.lookup.variants.values_list("text", flat=True))
 
     headword, inflections = fetch_inflections(search_term)
     if headword is None:
@@ -32,7 +32,7 @@ def get_variants(search_term: str) -> list[str]:
     if lookup is None:
         lookup = WordVariantLookup.objects.create(
             headword=headword,
-            fetched_at=datetime.now(tz=timezone.utc),
+            fetched_at=datetime.now(tz=UTC),
         )
         if inflections:
             WordVariant.objects.bulk_create(
@@ -41,4 +41,4 @@ def get_variants(search_term: str) -> list[str]:
 
     WordVariantAlias.objects.create(searched_term=search_term, lookup=lookup)
 
-    return list(lookup.variants.values_list('text', flat=True))
+    return list(lookup.variants.values_list("text", flat=True))

@@ -8,12 +8,13 @@ https://docs.djangoproject.com/en/5.2/howto/deployment/wsgi/
 """
 
 import os
+
 import dotenv
 
 dotenv.load_dotenv()
 
-from django.core.wsgi import get_wsgi_application
+from django.core.wsgi import get_wsgi_application  # noqa: E402
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'bobntay.settings')
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "bobntay.settings")
 
 application = get_wsgi_application()

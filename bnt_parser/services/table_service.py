@@ -6,6 +6,7 @@ from bnt_parser.tables.song_table import SongTable
 from bnt_parser.tables.word_table import WordTable
 from bnt_parser.tables.writer_table import WriterTable
 
+
 class TableService:
     TABLE_NAMES = {
         "external_source": ExternalSourceTable,

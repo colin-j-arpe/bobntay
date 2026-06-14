@@ -1,6 +1,7 @@
 from bnt_parser.models import ExternalSource
 
-class ExternalSourceTable():
+
+class ExternalSourceTable:
     """
     Class representing the external source table in the database.
     This class is responsible for managing external source data.
@@ -33,10 +34,7 @@ class ExternalSourceTable():
         :param url: The URL endpoint associated with the external ID.
         :return: True if the external source exists, False otherwise.
         """
-        external_source_results = ExternalSource.objects.filter(
-            source=api,
-            external_id=id
-        ).all()
+        external_source_results = ExternalSource.objects.filter(source=api, external_id=id).all()
 
         for source in external_source_results:
             if source.endpoint == url:

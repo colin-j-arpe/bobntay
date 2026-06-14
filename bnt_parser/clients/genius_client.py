@@ -3,25 +3,28 @@ import os
 import random
 import re
 import urllib.parse
+
 import requests
 
 PATHS = {
-    'search': 'search',
+    "search": "search",
 }
-WRITERS = [w.strip() for w in os.getenv('GENIUS_WRITERS', 'robert pollard,taylor swift').split(',')]
+WRITERS = [w.strip() for w in os.getenv("GENIUS_WRITERS", "robert pollard,taylor swift").split(",")]
 PAGE_SIZE = 50
+
 
 class GeniusClient:
     """
     A client for interacting with the Genius API.
     """
+
     ACCESS_TOKEN = os.getenv("GENIUS_ACCESS_TOKEN")
-    BASE_URL = 'https://api.genius.com'
+    BASE_URL = "https://api.genius.com"
 
     def __init__(self):
         self.headers = {
-            'Accept': 'application/json',
-            'Authorization': f'Bearer {self.ACCESS_TOKEN}',
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self.ACCESS_TOKEN}",
         }
 
     def get_next_song(self):
@@ -34,12 +37,12 @@ class GeniusClient:
         url = f"{self.BASE_URL}/{PATHS['search']}"
         writer = WRITERS[random.randrange(0, len(WRITERS))]
         query_params = {
-            'q': writer,
-            'per_page': PAGE_SIZE,
+            "q": writer,
+            "per_page": PAGE_SIZE,
         }
 
         while True:
-            query_params['page'] = page
+            query_params["page"] = page
 
             response = requests.get(
                 url=url,
@@ -49,32 +52,32 @@ class GeniusClient:
             data = response.json()
 
             if data is None:
-                logging.error(f'No response from Genius API for {writer}')
+                logging.error(f"No response from Genius API for {writer}")
                 yield None
                 break
 
             if response.status_code != 200:
-                logging.error(f'Genius API returned status {response.status_code}; response: {response.text}')
+                logging.error(
+                    f"Genius API returned status {response.status_code}; response: {response.text}"
+                )
                 yield None
                 break
 
-            hits = data['response']['hits']
+            hits = data["response"]["hits"]
             if not hits:
                 yield None
                 break
 
             for hit in hits:
-                if hit['type'] == 'song':
-                    yield hit['result']
+                if hit["type"] == "song":
+                    yield hit["result"]
 
             page += 1
         yield None
 
     def search(self, artist: str, title: str) -> dict | None:
         url = f"{self.BASE_URL}/{PATHS['search']}"
-        query = {
-            'q': f"{artist} {title}"
-        }
+        query = {"q": f"{artist} {title}"}
 
         response = requests.get(
             url=url,
@@ -83,9 +86,12 @@ class GeniusClient:
         )
         results = response.json()
 
-        for hit in results['response']['hits']:
-            song = hit['result']
-            if song['primary_artist']['name'].lower() == artist.lower() and song['title'].lower() == title.lower():
+        for hit in results["response"]["hits"]:
+            song = hit["result"]
+            if (
+                song["primary_artist"]["name"].lower() == artist.lower()
+                and song["title"].lower() == title.lower()
+            ):
                 return song
 
         return None
@@ -97,7 +103,7 @@ class GeniusClient:
         :param url: The URL of the Genius entry.
         :return: The Genius entry data or None if not found.
         """
-        entry_type = re.compile('\\/(\\w+)s\\/').findall(path)[0]
+        entry_type = re.compile("\\/(\\w+)s\\/").findall(path)[0]
 
         response = requests.get(
             url=f"{self.BASE_URL}/{path}",
@@ -106,7 +112,9 @@ class GeniusClient:
         data = response.json()
 
         if response.status_code != 200:
-            logging.error(f'Genius API returned status {response.status_code}; response: {response.text}')
+            logging.error(
+                f"Genius API returned status {response.status_code}; response: {response.text}"
+            )
             return None
 
-        return data['response'][entry_type]
+        return data["response"][entry_type]
