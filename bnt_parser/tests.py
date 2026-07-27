@@ -2,7 +2,9 @@ import json
 import os
 from unittest.mock import MagicMock, call, patch
 
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 
 # Test API clients
 from bnt_parser.clients.genius_client import GeniusClient
@@ -425,54 +427,16 @@ class SongServiceTestCase(TestCase):
             patch.object(TableService, "get_table") as mock_get_table,
             patch.object(SectionTable, "save") as mock_section_save,
             patch.object(LineTable, "save") as mock_line_save,
-            patch.object(WordTable, "save_if_not_exists") as mock_word_save,
+            patch.object(WordTable, "save_all") as mock_word_save_all,
         ):
             mock_get_table.side_effect = [
                 self.section_table,
                 self.line_table,
                 self.word_table,
-                self.word_table,
-                self.word_table,
-                self.word_table,
-                self.line_table,
-                self.word_table,
-                self.word_table,
-                self.word_table,
-                self.word_table,
-                self.section_table,
-                self.line_table,
-                self.word_table,
-                self.word_table,
-                self.word_table,
-                self.word_table,
-                self.line_table,
-                self.word_table,
-                self.word_table,
-                self.word_table,
-                self.word_table,
             ]
             expected_get_table_calls = [
                 call("section"),
                 call("line"),
-                call("word"),
-                call("word"),
-                call("word"),
-                call("word"),
-                call("line"),
-                call("word"),
-                call("word"),
-                call("word"),
-                call("word"),
-                call("section"),
-                call("line"),
-                call("word"),
-                call("word"),
-                call("word"),
-                call("word"),
-                call("line"),
-                call("word"),
-                call("word"),
-                call("word"),
                 call("word"),
             ]
 
@@ -514,30 +478,18 @@ class SongServiceTestCase(TestCase):
                 ),
             ]
 
-            expected_word_save_calls = [
-                call(text="first", line=test_line_objects[0]),
-                call(text="line", line=test_line_objects[0]),
-                call(text="of", line=test_line_objects[0]),
-                call(text="verse", line=test_line_objects[0]),
-                call(text="line", line=test_line_objects[1]),
-                call(text="of", line=test_line_objects[1]),
-                call(text="second", line=test_line_objects[1]),
-                call(text="verse", line=test_line_objects[1]),
-                call(text="chorus", line=test_line_objects[2]),
-                call(text="first", line=test_line_objects[2]),
-                call(text="line", line=test_line_objects[2]),
-                call(text="of", line=test_line_objects[2]),
-                call(text="chorus", line=test_line_objects[3]),
-                call(text="line", line=test_line_objects[3]),
-                call(text="of", line=test_line_objects[3]),
-                call(text="second", line=test_line_objects[3]),
+            expected_line_words = [
+                (test_line_objects[0], ["first", "line", "of", "verse"]),
+                (test_line_objects[1], ["line", "of", "second", "verse"]),
+                (test_line_objects[2], ["chorus", "first", "line", "of"]),
+                (test_line_objects[3], ["chorus", "line", "of", "second"]),
             ]
 
             self.service.save_lyrics()
 
             mock_get_table.assert_has_calls(expected_get_table_calls)
-            assert mock_get_table.call_count == 22, (
-                "Expected calls to access section, line, and word tables"
+            assert mock_get_table.call_count == 3, (
+                "Expected one lookup each of the section, line, and word tables"
             )
 
             mock_section_save.assert_has_calls(expected_section_save_calls)
@@ -546,10 +498,7 @@ class SongServiceTestCase(TestCase):
             mock_line_save.assert_has_calls(expected_line_save_calls)
             assert mock_line_save.call_count == 4, "Expected four calls to save lines"
 
-            mock_word_save.assert_has_calls(expected_word_save_calls)
-            assert mock_word_save.call_count == 16, "Expected sixteen calls to save words"
-
-            pass
+            mock_word_save_all.assert_called_once_with(expected_line_words)
 
 
 class GeniusPagePrefetchedTestCase(TestCase):
@@ -783,6 +732,40 @@ class SubmitPageViewTestCase(TestCase):
             mock_service.save_song.assert_called_once()
             mock_service.save_lyrics.assert_called_once()
             assert "Buzzards and Dreadful Crows" in response.json()["detail"]
+
+    def test_rolls_back_song_when_lyrics_fail(self):
+        """
+        A failure part-way through the save must leave nothing behind.
+
+        Without a transaction the song row commits before the lyrics finish, so a
+        worker timeout leaves a truncated song that looks already-processed and is
+        never retried.
+        """
+        genius_record = {
+            "id": 999001,
+            "api_path": "/songs/999001",
+            "title": "Buzzards and Dreadful Crows",
+            "primary_artist": {"name": "Guided by Voices"},
+            "album": None,
+            "writer_artists": [],
+        }
+
+        with (
+            patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}),
+            patch.object(SongService, "save_lyrics", side_effect=RuntimeError("worker timeout")),
+            self.assertRaises(RuntimeError),
+        ):
+            self._post(
+                data={
+                    "track_data": self.track_data,
+                    "genius_record": genius_record,
+                    "html": self.html_content,
+                },
+                key=self.API_KEY,
+            )
+
+        assert Song.objects.count() == 0, "Song row must not survive a failed lyrics save"
+        assert ExternalSource.objects.count() == 0, "External source must roll back with the song"
 
     def test_returns_400_when_fields_missing(self):
         with patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}):
@@ -1219,6 +1202,65 @@ class WordTableTestCase(TestCase):
         assert word.pk == existing_word.pk, "Should reuse existing word"
         assert self.line in word.line.all(), "Line should be added to existing word"
         assert Word.objects.filter(text="crows").count() == 1, "Should not create a duplicate word"
+
+    def _make_line(self, lyrics: str, order: int) -> Line:
+        return Line.objects.create(lyrics=lyrics, order=order, section=self.line.section)
+
+    def test_save_all_creates_and_links_new_words(self):
+        self.table.save_all([(self.line, ["buzzards", "dreadful", "crows"])])
+
+        assert Word.objects.count() == 3
+        assert sorted(w.text for w in self.line.words.all()) == ["buzzards", "crows", "dreadful"]
+
+    def test_save_all_reuses_existing_words(self):
+        existing = Word.objects.create(text="crows")
+
+        self.table.save_all([(self.line, ["crows", "buzzards"])])
+
+        assert Word.objects.filter(text="crows").count() == 1, "Should not duplicate the word"
+        assert existing in self.line.words.all()
+
+    def test_save_all_links_repeated_word_to_every_line(self):
+        second_line = self._make_line("Another line of lyrics", 2)
+
+        self.table.save_all([(self.line, ["crows"]), (second_line, ["crows"])])
+
+        word = Word.objects.get(text="crows")
+        assert Word.objects.count() == 1, "One word row shared by both lines"
+        assert sorted(line.pk for line in word.line.all()) == sorted([self.line.pk, second_line.pk])
+
+    def test_save_all_is_idempotent(self):
+        self.table.save_all([(self.line, ["buzzards", "crows"])])
+        self.table.save_all([(self.line, ["buzzards", "crows"])])
+
+        assert Word.objects.count() == 2, "Re-saving should not duplicate words"
+        assert self.line.words.count() == 2, "Re-saving should not duplicate links"
+
+    def test_save_all_ignores_empty_input(self):
+        with self.assertNumQueries(0):
+            self.table.save_all([])
+            self.table.save_all([(self.line, [])])
+
+        assert Word.objects.count() == 0
+
+    def test_save_all_query_count_does_not_grow_with_word_count(self):
+        """The point of save_all: cost stays flat, not one round trip per word."""
+        large = []
+        for index in range(50):
+            line = self._make_line(f"Line number {index}", index + 2)
+            large.append((line, [f"word{index}x{n}" for n in range(20)]))
+
+        with self.assertNumQueries(4):
+            self.table.save_all([(self.line, ["one", "two", "three"])])
+
+        with CaptureQueriesContext(connection) as queries:
+            self.table.save_all(large)
+
+        # 1000 words once cost several thousand round trips. The only reason this is
+        # not four queries too is bulk_create splitting to fit the backend's parameter
+        # limit, which scales far more slowly than one query per word.
+        assert len(queries) < 20, f"Expected a handful of queries, got {len(queries)}"
+        assert Word.objects.count() == 1003
 
 
 class WriterTableTestCase(TestCase):

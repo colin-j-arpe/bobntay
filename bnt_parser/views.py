@@ -1,5 +1,6 @@
 import os
 
+from django.db import transaction
 from rest_framework import status
 from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
@@ -68,7 +69,12 @@ class SubmitPageView(APIView):
             genius_record=genius_record,
             html=html.encode("utf-8"),
         )
-        song_service.save_song()
-        song_service.save_lyrics()
+        # Saved as one unit so a worker timeout part-way through cannot leave a song
+        # with only some of its lyrics. A partial save is invisible afterwards: the
+        # song row commits, so the track counts as already processed and is never
+        # retried, leaving the truncated lyrics in place for good.
+        with transaction.atomic():
+            song_service.save_song()
+            song_service.save_lyrics()
 
         return Response({"detail": f'Saved "{song_service.title}" by {song_service.artist}.'})
