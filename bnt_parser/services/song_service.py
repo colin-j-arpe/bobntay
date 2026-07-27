@@ -4,7 +4,7 @@ from functools import reduce
 from re import Pattern
 
 from bnt_parser.clients.genius_client import GeniusClient
-from bnt_parser.models import ExternalSource
+from bnt_parser.models import ExternalSource, Line
 from bnt_parser.services.table_service import TableService
 from bnt_parser.utils.genius_page import GeniusPage
 
@@ -247,22 +247,25 @@ class SongService:
         types: list[str] = reduce(extract_type, self.sections, [])
         allow_other: bool = len(types) > 1 and "Verse" not in types
 
+        section_table = self.table_service.get_table("section")
+        line_table = self.table_service.get_table("line")
+        line_words: list[tuple[Line, list[str]]] = []
+
         for section in self.sections:
-            section_object = self.table_service.get_table("section").save(
+            section_object = section_table.save(
                 song=self.song_object,
                 section_data=section,
                 multiple_sections=allow_other,
             )
 
             for line_order, line in enumerate(section["lines"], start=1):
-                line_object = self.table_service.get_table("line").save(
+                line_object = line_table.save(
                     lyrics=line,
                     order=line_order,
                     section=section_object,
                 )
 
-                for word in self.parse_words(line):
-                    self.table_service.get_table("word").save_if_not_exists(
-                        text=word,
-                        line=line_object,
-                    )
+                line_words.append((line_object, self.parse_words(line)))
+
+        # Batched rather than saved per word; see WordTable.save_all.
+        self.table_service.get_table("word").save_all(line_words)
