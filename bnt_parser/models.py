@@ -25,6 +25,53 @@ class ExternalSource(models.Model):
         return self.endpoint
 
 
+class RejectedTrack(models.Model):
+    """
+    Model to record a track that was inspected and deliberately not stored.
+
+    Kept deliberately separate from ExternalSource. Song, Writer and Release each
+    hold a OneToOneField to ExternalSource, so a rejection recorded there would be
+    an orphan row and would make ExternalSourceTable.song_exists() report unsaved
+    songs as already saved.
+
+    Without this record, a track rejected after the API search loop has finished
+    can never be skipped: nothing is saved, so song_exists() keeps returning False
+    and the same track is served forever.
+    """
+
+    class ReasonEnum(models.TextChoices):
+        TRANSLATION = "TRANSLATION", "Translation of another song"
+        NON_MUSIC = "NON_MUSIC", "Tagged Non-Music"
+        NO_LYRICS = "NO_LYRICS", "No lyrics found on page"
+
+    source = EnumField(ExternalSource.SourceEnum, null=False, blank=False)
+    external_id = models.IntegerField(null=True, blank=False)
+    endpoint = models.CharField(max_length=255, null=False, blank=False)
+    reason = EnumField(ReasonEnum, null=False, blank=False)
+    # Title and artist are denormalised copies held purely so rejections can be
+    # audited without a second API call. Nothing reads them.
+    title = models.CharField(max_length=255, blank=True)
+    artist = models.CharField(max_length=127, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Rejected Track"
+        verbose_name_plural = "Rejected Tracks"
+        # No separate Index here: the unique constraint already builds a btree on
+        # exactly (source, external_id), which is the only way this table is
+        # queried, so an explicit index would just be a second copy to maintain.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "external_id"],
+                name="unique_rejected_track",
+            ),
+        ]
+
+    def __str__(self):
+        return f'"{self.title}" by {self.artist} rejected: {self.reason}'
+
+
 class Release(models.Model):
     """
     Model to represent a release containing one or more songs.
