@@ -2,17 +2,27 @@ import json
 import os
 from unittest.mock import MagicMock, call, patch
 
-from django.db import connection
+from django.db import IntegrityError, connection, transaction
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 
 # Test API clients
 from bnt_parser.clients.genius_client import GeniusClient
-from bnt_parser.models import ExternalSource, Line, Release, Section, Song, Word, Writer
+from bnt_parser.models import (
+    ExternalSource,
+    Line,
+    RejectedTrack,
+    Release,
+    Section,
+    Song,
+    Word,
+    Writer,
+)
 from bnt_parser.services.song_service import SongService
 from bnt_parser.services.table_service import TableService
 from bnt_parser.tables.external_source_table import ExternalSourceTable
 from bnt_parser.tables.line_table import LineTable
+from bnt_parser.tables.rejected_track_table import RejectedTrackTable
 from bnt_parser.tables.release_table import ReleaseTable
 from bnt_parser.tables.section_table import SectionTable
 from bnt_parser.tables.song_table import SongTable
@@ -813,6 +823,12 @@ class TableServiceTestCase(TestCase):
             "Expected ValueError for invalid table"
         )
 
+    def test_get_rejected_track_table(self):
+        rejected_track_table = self.table_service.get_table("rejected_track")
+        assert isinstance(rejected_track_table, RejectedTrackTable), (
+            "Expected instance of RejectedTrackTable"
+        )
+
 
 # ============================================================
 # Table Tests
@@ -878,6 +894,196 @@ class ExternalSourceTableTestCase(TestCase):
             )
             is False
         )
+
+
+class RejectedTrackTableTestCase(TestCase):
+    def setUp(self):
+        self.table = RejectedTrackTable()
+
+    def test_is_rejected_false_when_empty(self):
+        assert (
+            self.table.is_rejected(
+                api=ExternalSource.SourceEnum.GENIUS,
+                id=123,
+            )
+            is False
+        )
+
+    def test_reject_creates_record(self):
+        rejected = self.table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=123,
+            endpoint="/songs/123",
+            reason=RejectedTrack.ReasonEnum.TRANSLATION,
+            title="The Fate of Ophelia (Deutsche Übersetzung)",
+            artist="Genius Deutsche Übersetzungen",
+        )
+
+        assert rejected.pk is not None, "RejectedTrack should have a DB ID after reject"
+        assert rejected.source == ExternalSource.SourceEnum.GENIUS
+        assert rejected.external_id == 123
+        assert rejected.endpoint == "/songs/123"
+        assert rejected.reason == RejectedTrack.ReasonEnum.TRANSLATION
+        assert rejected.title == "The Fate of Ophelia (Deutsche Übersetzung)"
+        assert rejected.artist == "Genius Deutsche Übersetzungen"
+
+    def test_reject_then_is_rejected_true(self):
+        self.table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=456,
+            endpoint="/songs/456",
+            reason=RejectedTrack.ReasonEnum.NON_MUSIC,
+        )
+
+        assert (
+            self.table.is_rejected(
+                api=ExternalSource.SourceEnum.GENIUS,
+                id=456,
+            )
+            is True
+        )
+
+    def test_reject_defaults_title_and_artist_to_blank(self):
+        rejected = self.table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=789,
+            endpoint="/songs/789",
+            reason=RejectedTrack.ReasonEnum.NO_LYRICS,
+        )
+
+        assert rejected.title == ""
+        assert rejected.artist == ""
+
+    def test_reject_is_idempotent(self):
+        """
+        Re-rejecting a track must not raise on the unique constraint.
+
+        Both code paths can reach the same track, so this will happen in normal
+        operation and must not surface as a 500.
+        """
+        first = self.table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=101,
+            endpoint="/songs/101",
+            reason=RejectedTrack.ReasonEnum.TRANSLATION,
+        )
+        second = self.table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=101,
+            endpoint="/songs/101",
+            reason=RejectedTrack.ReasonEnum.NON_MUSIC,
+        )
+
+        assert first.pk == second.pk, "Re-rejecting should return the existing record"
+        assert RejectedTrack.objects.count() == 1, "Re-rejecting should not create a second row"
+        assert second.reason == RejectedTrack.ReasonEnum.TRANSLATION, (
+            "First reason recorded should win; a track can trip more than one filter"
+        )
+
+    def test_is_rejected_ignores_endpoint(self):
+        """
+        Unlike ExternalSourceTable.song_exists(), a rejection is keyed on the
+        external ID alone — it is a decision about the track, so it must hold
+        however the track is reached.
+        """
+        self.table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=202,
+            endpoint="/songs/202",
+            reason=RejectedTrack.ReasonEnum.NON_MUSIC,
+        )
+
+        assert (
+            self.table.is_rejected(
+                api=ExternalSource.SourceEnum.GENIUS,
+                id=202,
+            )
+            is True
+        )
+
+    def test_is_rejected_false_for_wrong_id(self):
+        self.table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=303,
+            endpoint="/songs/303",
+            reason=RejectedTrack.ReasonEnum.NON_MUSIC,
+        )
+
+        assert (
+            self.table.is_rejected(
+                api=ExternalSource.SourceEnum.GENIUS,
+                id=999,
+            )
+            is False
+        )
+
+    def test_is_rejected_false_for_other_source(self):
+        self.table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=404,
+            endpoint="/songs/404",
+            reason=RejectedTrack.ReasonEnum.NON_MUSIC,
+        )
+
+        assert (
+            self.table.is_rejected(
+                api=ExternalSource.SourceEnum.MUSIXMATCH,
+                id=404,
+            )
+            is False
+        )
+
+    def test_same_id_allowed_across_sources(self):
+        self.table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=505,
+            endpoint="/songs/505",
+            reason=RejectedTrack.ReasonEnum.NON_MUSIC,
+        )
+        self.table.reject(
+            api=ExternalSource.SourceEnum.MUSIXMATCH,
+            id=505,
+            endpoint="/track/505",
+            reason=RejectedTrack.ReasonEnum.NON_MUSIC,
+        )
+
+        assert RejectedTrack.objects.count() == 2, (
+            "The unique constraint is per source, so the same ID may repeat across APIs"
+        )
+
+
+class RejectedTrackModelTestCase(TestCase):
+    def test_unique_constraint_blocks_duplicates(self):
+        """
+        Guards the constraint itself, independent of RejectedTrackTable.reject()
+        going through get_or_create.
+        """
+        RejectedTrack.objects.create(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=606,
+            endpoint="/songs/606",
+            reason=RejectedTrack.ReasonEnum.TRANSLATION,
+        )
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            RejectedTrack.objects.create(
+                source=ExternalSource.SourceEnum.GENIUS,
+                external_id=606,
+                endpoint="/songs/606-again",
+                reason=RejectedTrack.ReasonEnum.NON_MUSIC,
+            )
+
+    def test_str(self):
+        rejected = RejectedTrack(
+            source=ExternalSource.SourceEnum.GENIUS,
+            external_id=707,
+            endpoint="/songs/707",
+            reason=RejectedTrack.ReasonEnum.NON_MUSIC,
+            title="The Eras Tour Setlist",
+            artist="Taylor Swift",
+        )
+
+        assert str(rejected) == '"The Eras Tour Setlist" by Taylor Swift rejected: NON_MUSIC'
 
 
 class ReleaseTableTestCase(TestCase):

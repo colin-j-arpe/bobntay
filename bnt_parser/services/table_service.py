@@ -1,5 +1,6 @@
 from bnt_parser.tables.external_source_table import ExternalSourceTable
 from bnt_parser.tables.line_table import LineTable
+from bnt_parser.tables.rejected_track_table import RejectedTrackTable
 from bnt_parser.tables.release_table import ReleaseTable
 from bnt_parser.tables.section_table import SectionTable
 from bnt_parser.tables.song_table import SongTable
@@ -11,6 +12,7 @@ class TableService:
     TABLE_NAMES = {
         "external_source": ExternalSourceTable,
         "line": LineTable,
+        "rejected_track": RejectedTrackTable,
         "release": ReleaseTable,
         "section": SectionTable,
         "song": SongTable,
