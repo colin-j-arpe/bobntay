@@ -4,7 +4,7 @@ from functools import reduce
 from re import Pattern
 
 from bnt_parser.clients.genius_client import GeniusClient
-from bnt_parser.models import ExternalSource, Line
+from bnt_parser.models import ExternalSource, Line, RejectedTrack
 from bnt_parser.services.table_service import TableService
 from bnt_parser.utils.genius_page import GeniusPage
 
@@ -28,6 +28,45 @@ class SongService:
 
         self.song_object = None
 
+    @staticmethod
+    def is_translation(genius_record: dict) -> bool:
+        """
+        Returns True if the record is a fan translation of another song.
+
+        Genius stores translations as full song entries whose lyrics are in another
+        language, linked back to the original by a "translation_of" relationship.
+        The inverse relationship is the plural "translations", which hangs off the
+        original — a legitimate song, often a popular one — and must not match.
+        Relationships with an empty "songs" list are placeholders and mean nothing.
+        """
+        return any(
+            relationship.get("type") == "translation_of" and relationship.get("songs")
+            for relationship in genius_record.get("song_relationships", [])
+        )
+
+    def reject_track(self, track_data: dict, reason: RejectedTrack.ReasonEnum) -> None:
+        """
+        Record a track as rejected so later runs skip it without re-fetching.
+
+        Persisting the decision is what keeps the ingestion loop moving: nothing is
+        written to the song tables for a rejected candidate, so song_exists() stays
+        False and the search would otherwise serve the same track forever.
+        """
+        logging.info(
+            'Rejecting song "%s" by %s: %s',
+            track_data["title"],
+            track_data["primary_artist_names"],
+            reason,
+        )
+        self.table_service.get_table("rejected_track").reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=track_data["id"],
+            endpoint=track_data["api_path"],
+            reason=reason,
+            title=track_data["title"],
+            artist=track_data["primary_artist_names"],
+        )
+
     def select_song(self):
         """
         Select a song from the Genius API.
@@ -45,13 +84,13 @@ class SongService:
             ):
                 continue
 
-            found_lyrics = self.fetch_genius_page(track)
-            if not found_lyrics:
-                logging.info(
-                    'Skipping song "%s" by %s - no lyrics found',
-                    track["track_name"],
-                    track["artist_name"],
-                )
+            if self.table_service.get_table("rejected_track").is_rejected(
+                api=ExternalSource.SourceEnum.GENIUS,
+                id=track["id"],
+            ):
+                continue
+
+            if not self.fetch_genius_page(track):
                 continue
 
             break
@@ -75,8 +114,18 @@ class SongService:
             ):
                 continue
 
+            if self.table_service.get_table("rejected_track").is_rejected(
+                api=ExternalSource.SourceEnum.GENIUS,
+                id=track["id"],
+            ):
+                continue
+
             genius_entry = self.genius_client.fetch_entry(path=track["api_path"])
             if genius_entry is None:
+                continue
+
+            if self.is_translation(genius_entry):
+                self.reject_track(track, RejectedTrack.ReasonEnum.TRANSLATION)
                 continue
 
             return {
@@ -108,6 +157,17 @@ class SongService:
 
         genius_entry = self.genius_client.fetch_entry(path=track_data["api_path"])
         if genius_entry is None:
+            logging.info(
+                'Skipping song "%s" by %s - no Genius record returned',
+                track_data["title"],
+                track_data["primary_artist_names"],
+            )
+            return False
+
+        # Checked before the page fetch: a translation is rejected on the record
+        # alone, so there is no reason to pay for its HTML.
+        if self.is_translation(genius_entry):
+            self.reject_track(track_data, RejectedTrack.ReasonEnum.TRANSLATION)
             return False
 
         self.genius_record = genius_entry

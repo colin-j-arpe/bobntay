@@ -32,6 +32,22 @@ from bnt_parser.tables.writer_table import WriterTable
 from bnt_parser.utils.genius_page import GeniusPage
 
 
+def table_lookup(**tables):
+    """
+    Build a side_effect for TableService.get_table that dispatches by table name.
+
+    A single pass through the song service now touches more than one table, so a
+    flat return_value would hand every caller the same object. Raises KeyError on
+    an unexpected table name rather than returning a mock, so a stray lookup fails
+    loudly instead of silently passing.
+    """
+
+    def lookup(name):
+        return tables[name]
+
+    return lookup
+
+
 class GeniusClientTestCase(TestCase):
     def setUp(self):
         self.client = GeniusClient()
@@ -176,6 +192,7 @@ class SongServiceTestCase(TestCase):
         self.word_table = WordTable()
         self.external_source_table = ExternalSourceTable()
         self.writer_table = WriterTable()
+        self.rejected_track_table = RejectedTrackTable()
         self.genius_client = GeniusClient()
         self.genius_url = "https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics"
         self.service = SongService(
@@ -224,14 +241,18 @@ class SongServiceTestCase(TestCase):
             patch.object(GeniusClient, "fetch_entry", return_value=new_song_genius_entry),
             patch.object(TableService, "get_table") as mock_get_table,
             patch.object(ExternalSourceTable, "song_exists") as mock_song_exists,
+            patch.object(RejectedTrackTable, "is_rejected", return_value=False),
             patch.object(GeniusPage, "fetchContent"),
             patch.object(GeniusPage, "lyrics") as mock_lyrics,
         ):
             # Configure the mock to return a generator of song data
             mock_get_next_song.return_value = iter([existing_song, new_song, None])
 
-            # Simulate that the table service returns the song table
-            mock_get_table.return_value = self.external_source_table
+            # Simulate that the table service hands back each table by name
+            mock_get_table.side_effect = table_lookup(
+                external_source=self.external_source_table,
+                rejected_track=self.rejected_track_table,
+            )
 
             # Simulate that the first song exists in the database, the second does not
             mock_song_exists.side_effect = [True, False]
@@ -241,9 +262,13 @@ class SongServiceTestCase(TestCase):
 
             self.service.select_song()
             mock_get_next_song.assert_called_once()
-            mock_get_table.assert_called_with("external_source")
-            assert mock_get_table.call_count == 2, (
-                "Expected two calls to access the external source table"
+            # The existing song is dropped on the external_source check alone; only
+            # the new one goes on to the rejected_track check.
+            mock_get_table.assert_has_calls(
+                [call("external_source"), call("external_source"), call("rejected_track")]
+            )
+            assert mock_get_table.call_count == 3, (
+                "Expected two external source lookups and one rejected track lookup"
             )
 
             expected_song_calls = [
@@ -266,6 +291,88 @@ class SongServiceTestCase(TestCase):
             assert self.service.artist == new_song["primary_artist_names"], "Expected artist name"
             assert self.service.title == new_song["title"], "Expected song title"
             assert self.service.genius_record is not None, "Expected Genius record to be set"
+
+    def test_select_song_rejects_translation_before_fetching_page(self):
+        """
+        The legacy in-process path shares one blocklist with the split GET/POST
+        path, and rejects on the API record alone so it never fetches the HTML.
+        """
+        translation = {
+            "title": "Song Title (Traduction Française)",
+            "primary_artist_names": "Genius Traductions Françaises",
+            "id": 5555,
+            "api_path": "/songs/5555",
+            "url": "https://genius.com/genius-traductions-francaises-song-title-lyrics",
+        }
+        translation_entry = {
+            "id": 5555,
+            "url": translation["url"],
+            "writer_artists": [],
+            "song_relationships": [
+                {"type": "translation_of", "songs": [{"id": 4321, "title": "Song Title"}]}
+            ],
+        }
+
+        with (
+            patch.object(
+                GeniusClient, "get_next_song", return_value=iter([translation, None])
+            ) as mock_get_next_song,
+            patch.object(GeniusClient, "fetch_entry", return_value=translation_entry),
+            patch.object(
+                TableService,
+                "get_table",
+                side_effect=table_lookup(
+                    external_source=self.external_source_table,
+                    rejected_track=self.rejected_track_table,
+                ),
+            ),
+            patch.object(ExternalSourceTable, "song_exists", return_value=False),
+            patch.object(GeniusPage, "fetchContent") as mock_fetch_content,
+        ):
+            self.service.select_song()
+
+            mock_get_next_song.assert_called_once()
+            mock_fetch_content.assert_not_called()
+
+        assert self.service.genius_record is None, "Rejected track must not become the selection"
+
+        rejected = RejectedTrack.objects.get(external_id=translation["id"])
+        assert rejected.reason == RejectedTrack.ReasonEnum.TRANSLATION
+        assert rejected.title == translation["title"]
+
+    def test_select_song_skips_already_rejected_track(self):
+        rejected_song = {
+            "title": "Previously Rejected",
+            "primary_artist_names": "Artist",
+            "id": 6666,
+            "api_path": "/songs/6666",
+            "url": "https://genius.com/artist-previously-rejected-lyrics",
+        }
+        self.rejected_track_table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=rejected_song["id"],
+            endpoint=rejected_song["api_path"],
+            reason=RejectedTrack.ReasonEnum.NON_MUSIC,
+        )
+
+        with (
+            patch.object(GeniusClient, "get_next_song", return_value=iter([rejected_song, None])),
+            patch.object(GeniusClient, "fetch_entry") as mock_fetch_entry,
+            patch.object(
+                TableService,
+                "get_table",
+                side_effect=table_lookup(
+                    external_source=self.external_source_table,
+                    rejected_track=self.rejected_track_table,
+                ),
+            ),
+            patch.object(ExternalSourceTable, "song_exists", return_value=False),
+        ):
+            self.service.select_song()
+
+            mock_fetch_entry.assert_not_called()
+
+        assert self.service.genius_record is None
 
     def test_save_song(self):
         test_title = "Test Song"
@@ -631,9 +738,56 @@ class GeniusPagePrefetchedTestCase(TestCase):
         assert page.soup is page.soup, "The parsed soup should be cached, not rebuilt"
 
 
+class IsTranslationTestCase(TestCase):
+    """
+    The API-stage translation predicate. Pure function, so no mocking needed.
+    """
+
+    def test_no_relationships_key(self):
+        assert SongService.is_translation({"id": 1}) is False
+
+    def test_empty_relationships(self):
+        assert SongService.is_translation({"song_relationships": []}) is False
+
+    def test_translation_of_with_songs(self):
+        record = {
+            "song_relationships": [
+                {"type": "samples", "songs": []},
+                {"type": "translation_of", "songs": [{"id": 99, "title": "Original"}]},
+            ]
+        }
+        assert SongService.is_translation(record) is True
+
+    def test_translation_of_without_songs(self):
+        """
+        Genius returns the full set of relationship types on every song, most of
+        them empty. An empty "translation_of" means the song is not a translation.
+        """
+        record = {"song_relationships": [{"type": "translation_of", "songs": []}]}
+        assert SongService.is_translation(record) is False
+
+    def test_inverse_translations_relation_is_kept(self):
+        """
+        The plural "translations" is the inverse relation: it hangs off the
+        *original* song and lists the translations made of it. Popular songs carry
+        it, so matching on it would reject exactly the songs we most want.
+        """
+        record = {
+            "song_relationships": [
+                {"type": "translations", "songs": [{"id": 99, "title": "Original (Deutsch)"}]}
+            ]
+        }
+        assert SongService.is_translation(record) is False
+
+
 class FindNextTrackTestCase(TestCase):
     def setUp(self):
         self.external_source_table = ExternalSourceTable()
+        self.rejected_track_table = RejectedTrackTable()
+        self.tables = table_lookup(
+            external_source=self.external_source_table,
+            rejected_track=self.rejected_track_table,
+        )
         self.service = SongService(
             table_service=TableService(),
             genius_client=GeniusClient(),
@@ -652,9 +806,23 @@ class FindNextTrackTestCase(TestCase):
             "api_path": "/songs/2222",
             "url": "https://genius.com/artist-new-song-lyrics",
         }
+        self.translated_song = {
+            "title": "New Song (Traduction Française)",
+            "primary_artist_names": "Genius Traductions Françaises",
+            "id": 3333,
+            "api_path": "/songs/3333",
+            "url": "https://genius.com/genius-traductions-francaises-new-song-lyrics",
+        }
         self.genius_record = {
             "id": 2222,
             "writer_artists": [],
+        }
+        self.translated_record = {
+            "id": 3333,
+            "writer_artists": [],
+            "song_relationships": [
+                {"type": "translation_of", "songs": [{"id": 2222, "title": "New Song"}]}
+            ],
         }
 
     def test_skips_existing_returns_new(self):
@@ -664,7 +832,7 @@ class FindNextTrackTestCase(TestCase):
                 "get_next_song",
                 return_value=iter([self.existing_song, self.new_song, None]),
             ),
-            patch.object(TableService, "get_table", return_value=self.external_source_table),
+            patch.object(TableService, "get_table", side_effect=self.tables),
             patch.object(ExternalSourceTable, "song_exists", side_effect=[True, False]),
             patch.object(GeniusClient, "fetch_entry", return_value=self.genius_record),
         ):
@@ -678,7 +846,7 @@ class FindNextTrackTestCase(TestCase):
             patch.object(
                 GeniusClient, "get_next_song", return_value=iter([self.existing_song, None])
             ),
-            patch.object(TableService, "get_table", return_value=self.external_source_table),
+            patch.object(TableService, "get_table", side_effect=self.tables),
             patch.object(ExternalSourceTable, "song_exists", return_value=True),
         ):
             result = self.service.find_next_track()
@@ -687,12 +855,88 @@ class FindNextTrackTestCase(TestCase):
     def test_skips_track_when_fetch_entry_fails(self):
         with (
             patch.object(GeniusClient, "get_next_song", return_value=iter([self.new_song, None])),
-            patch.object(TableService, "get_table", return_value=self.external_source_table),
+            patch.object(TableService, "get_table", side_effect=self.tables),
             patch.object(ExternalSourceTable, "song_exists", return_value=False),
             patch.object(GeniusClient, "fetch_entry", return_value=None),
         ):
             result = self.service.find_next_track()
             assert result is None
+
+    def test_skips_translation_and_returns_next_good_track(self):
+        with (
+            patch.object(
+                GeniusClient,
+                "get_next_song",
+                return_value=iter([self.translated_song, self.new_song, None]),
+            ),
+            patch.object(TableService, "get_table", side_effect=self.tables),
+            patch.object(ExternalSourceTable, "song_exists", return_value=False),
+            patch.object(
+                GeniusClient,
+                "fetch_entry",
+                side_effect=[self.translated_record, self.genius_record],
+            ),
+        ):
+            result = self.service.find_next_track()
+
+        assert result is not None
+        assert result["track"] == self.new_song, "Expected the loop to move past the translation"
+
+        rejected = RejectedTrack.objects.get(external_id=self.translated_song["id"])
+        assert rejected.reason == RejectedTrack.ReasonEnum.TRANSLATION
+        assert rejected.source == ExternalSource.SourceEnum.GENIUS
+        assert rejected.endpoint == self.translated_song["api_path"]
+        assert rejected.title == self.translated_song["title"]
+        assert rejected.artist == self.translated_song["primary_artist_names"]
+
+    def test_skips_already_rejected_track_without_fetching_it(self):
+        """
+        The whole point of persisting a rejection: a track rejected on a previous
+        run costs no API call on this one.
+        """
+        self.rejected_track_table.reject(
+            api=ExternalSource.SourceEnum.GENIUS,
+            id=self.translated_song["id"],
+            endpoint=self.translated_song["api_path"],
+            reason=RejectedTrack.ReasonEnum.TRANSLATION,
+        )
+
+        with (
+            patch.object(
+                GeniusClient,
+                "get_next_song",
+                return_value=iter([self.translated_song, self.new_song, None]),
+            ),
+            patch.object(TableService, "get_table", side_effect=self.tables),
+            patch.object(ExternalSourceTable, "song_exists", return_value=False),
+            patch.object(
+                GeniusClient, "fetch_entry", return_value=self.genius_record
+            ) as mock_fetch_entry,
+        ):
+            result = self.service.find_next_track()
+
+            assert result is not None
+            assert result["track"] == self.new_song
+            mock_fetch_entry.assert_called_once_with(path=self.new_song["api_path"])
+
+    def test_keeps_track_with_no_writers(self):
+        """
+        Empty writer_artists is common on Pollard deep cuts and is deliberately not
+        an API-stage rejection; those pages are filtered later, on their HTML.
+        """
+        no_writer_record = {"id": 2222, "writer_artists": [], "song_relationships": []}
+
+        with (
+            patch.object(GeniusClient, "get_next_song", return_value=iter([self.new_song, None])),
+            patch.object(TableService, "get_table", side_effect=self.tables),
+            patch.object(ExternalSourceTable, "song_exists", return_value=False),
+            patch.object(GeniusClient, "fetch_entry", return_value=no_writer_record),
+        ):
+            result = self.service.find_next_track()
+
+        assert result is not None
+        assert result["track"] == self.new_song
+        assert RejectedTrack.objects.count() == 0, "A no-writer track must not be rejected"
 
 
 class LoadPrefetchedTestCase(TestCase):
