@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from unittest.mock import MagicMock, call, patch
 
 from django.db import IntegrityError, connection, transaction
@@ -84,6 +85,85 @@ class GeniusPageTestCase(TestCase):
         assert len(results) == 29, "Expected 29 lines of lyrics"
         assert results[0][0] == "[", "First line should be a section header"
         assert results[-1] == "You were the only one", "Last line of the song"
+
+    def test_lyrics_stable_across_calls(self):
+        """
+        lyrics() edits the shared soup as it parses. Those edits are idempotent
+        today, so this passes with or without memoisation — it is here to pin the
+        invariant, so that a future non-idempotent step in the parse fails loudly
+        instead of quietly changing what a repeat call returns.
+        """
+        first = self.page.lyrics()
+        second = self.page.lyrics()
+
+        assert second == first, "A second lyrics() call must not return different output"
+        assert len(second) == 29, "Expected 29 lines of lyrics on the second call too"
+
+    def test_lyrics_memoised(self):
+        assert self.page.lyrics() is self.page.lyrics(), (
+            "Repeat calls should return the cached list, not re-parse"
+        )
+
+    def test_is_non_music_false_for_a_song(self):
+        assert self.page.is_non_music() is False
+
+    def test_is_non_music_unaffected_by_lyrics_parse(self):
+        """
+        The tag links sit outside the lyrics containers, so the destructive parse
+        must not change the answer. Guards the call-order dependency.
+        """
+        before = self.page.is_non_music()
+        self.page.lyrics()
+        after = self.page.is_non_music()
+
+        assert before == after is False
+
+
+class GeniusPageNonMusicTestCase(TestCase):
+    """Tests for GeniusPage.is_non_music() against a real Non-Music page."""
+
+    FIXTURE_PATH = os.path.join(
+        os.path.dirname(__file__), "fixtures", "non_music_release_calendar.html"
+    )
+
+    def setUp(self):
+        with open(self.FIXTURE_PATH, "rb") as f:
+            self.fixture_content = f.read()
+        self.page = GeniusPage(url="https://genius.com/test", html=self.fixture_content)
+
+    def test_is_non_music_true(self):
+        assert self.page.is_non_music() is True
+
+    def test_is_non_music_true_after_lyrics_parse(self):
+        self.page.lyrics()
+
+        assert self.page.is_non_music() is True, (
+            "Parsing lyrics must not destroy the Non-Music signal"
+        )
+
+    def test_non_music_page_still_yields_lyrics(self):
+        """
+        This is why the Non-Music tag is needed rather than an empty-lyrics check:
+        release calendars carry parseable text, so a no-lyrics test would let them
+        straight through.
+        """
+        assert len(self.page.lyrics()) > 0
+
+    def test_matches_on_href_not_class_name(self):
+        """
+        The tag anchor's class carries a build hash (SongTags__Tag-sc-93a3a73a-3)
+        that changes whenever Genius rebuilds its front end. Rewriting every class
+        attribute must leave detection working.
+        """
+        declassed = re.sub(
+            rb'class="SongTags__[^"]*"',
+            b'class="totally-different"',
+            self.fixture_content,
+        )
+        assert declassed != self.fixture_content, "Fixture should contain SongTags classes to strip"
+
+        page = GeniusPage(url="https://genius.com/test", html=declassed)
+        assert page.is_non_music() is True
 
 
 class SongServiceTestCase(TestCase):
@@ -534,6 +614,21 @@ class GeniusPagePrefetchedTestCase(TestCase):
         assert len(results) == 29, "Expected 29 lines of lyrics"
         assert results[0][0] == "[", "First line should be a section header"
         assert results[-1] == "You were the only one", "Last line of the song"
+
+    def test_soup_not_parsed_on_construction(self):
+        """
+        Parsing is the expensive part of handling a page, so constructing one must
+        not pay for it. Also keeps construction working for callers that never
+        read the body.
+        """
+        with patch("bnt_parser.utils.genius_page.BeautifulSoup") as mock_soup:
+            GeniusPage(url="https://genius.com/test", html=self.fixture_content)
+            mock_soup.assert_not_called()
+
+    def test_soup_parsed_once_and_reused(self):
+        page = GeniusPage(url="https://genius.com/test", html=self.fixture_content)
+
+        assert page.soup is page.soup, "The parsed soup should be cached, not rebuilt"
 
 
 class FindNextTrackTestCase(TestCase):
