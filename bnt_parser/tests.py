@@ -243,6 +243,10 @@ class SongServiceTestCase(TestCase):
             patch.object(ExternalSourceTable, "song_exists") as mock_song_exists,
             patch.object(RejectedTrackTable, "is_rejected", return_value=False),
             patch.object(GeniusPage, "fetchContent"),
+            # fetchContent is a no-op here, so page_content is never set and any
+            # real parse would raise. is_non_music() is covered by
+            # FetchGeniusPageTestCase; this test is about the select_song loop.
+            patch.object(GeniusPage, "is_non_music", return_value=False),
             patch.object(GeniusPage, "lyrics") as mock_lyrics,
         ):
             # Configure the mock to return a generator of song data
@@ -939,9 +943,106 @@ class FindNextTrackTestCase(TestCase):
         assert RejectedTrack.objects.count() == 0, "A no-writer track must not be rejected"
 
 
+class FetchGeniusPageTestCase(TestCase):
+    """
+    The legacy in-process path. It applies the same HTML-stage filters as
+    load_prefetched(), so the two paths cannot drift into disagreeing about which
+    pages are worth keeping.
+    """
+
+    FIXTURE_PATH = os.path.join(
+        os.path.dirname(__file__), "fixtures", "buzzards_and_dreadful_crows.html"
+    )
+    NON_MUSIC_FIXTURE_PATH = os.path.join(
+        os.path.dirname(__file__), "fixtures", "non_music_release_calendar.html"
+    )
+
+    def setUp(self):
+        self.service = SongService(
+            table_service=TableService(),
+            genius_client=GeniusClient(),
+        )
+        self.track_data = {
+            "title": "Buzzards and Dreadful Crows",
+            "primary_artist_names": "Guided by Voices",
+            "url": "https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics",
+            "id": 12345,
+            "api_path": "/songs/12345",
+        }
+        self.genius_record = {"id": 12345, "writer_artists": [], "song_relationships": []}
+
+    def fetch(self, html):
+        page_response = MagicMock(status_code=200, content=html)
+        with (
+            patch.object(GeniusClient, "fetch_entry", return_value=self.genius_record),
+            patch("bnt_parser.utils.genius_page.requests.get", return_value=page_response),
+        ):
+            return self.service.fetch_genius_page(self.track_data)
+
+    def test_keeps_song_page(self):
+        with open(self.FIXTURE_PATH, "rb") as f:
+            assert self.fetch(f.read()) is True
+        assert self.service.title == self.track_data["title"]
+        assert RejectedTrack.objects.count() == 0
+
+    def test_rejects_non_music_page(self):
+        with open(self.NON_MUSIC_FIXTURE_PATH, "rb") as f:
+            assert self.fetch(f.read()) is False
+
+        assert self.service.rejection_reason == RejectedTrack.ReasonEnum.NON_MUSIC
+        assert self.service.lyrics == []
+        rejected = RejectedTrack.objects.get(external_id=self.track_data["id"])
+        assert rejected.reason == RejectedTrack.ReasonEnum.NON_MUSIC
+
+    def test_rejects_page_with_no_lyrics(self):
+        assert self.fetch(b"<html><body><p>Nothing to parse here.</p></body></html>") is False
+
+        assert self.service.rejection_reason == RejectedTrack.ReasonEnum.NO_LYRICS
+        rejected = RejectedTrack.objects.get(external_id=self.track_data["id"])
+        assert rejected.reason == RejectedTrack.ReasonEnum.NO_LYRICS
+
+    def test_translation_is_rejected_before_the_page_is_fetched(self):
+        """
+        A translation costs no page fetch: the record alone rules it out.
+        """
+        self.genius_record = {
+            "id": 12345,
+            "writer_artists": [],
+            "song_relationships": [{"type": "translation_of", "songs": [{"id": 999}]}],
+        }
+
+        with (
+            patch.object(GeniusClient, "fetch_entry", return_value=self.genius_record),
+            patch("bnt_parser.utils.genius_page.requests.get") as mock_get,
+        ):
+            assert self.service.fetch_genius_page(self.track_data) is False
+            mock_get.assert_not_called()
+
+        assert self.service.rejection_reason == RejectedTrack.ReasonEnum.TRANSLATION
+
+    def test_missing_record_is_skipped_without_a_rejection(self):
+        """
+        A missing record is not a verdict on the track — the fetch simply failed, so
+        nothing is written and the track stays eligible for a later run. This is the
+        404 gap noted as follow-up work; it deliberately still deadlocks rather than
+        recording a rejection reason that does not yet exist.
+        """
+        with (
+            patch.object(GeniusClient, "fetch_entry", return_value=None),
+            patch("bnt_parser.utils.genius_page.requests.get") as mock_get,
+        ):
+            assert self.service.fetch_genius_page(self.track_data) is False
+            mock_get.assert_not_called()
+
+        assert RejectedTrack.objects.count() == 0
+
+
 class LoadPrefetchedTestCase(TestCase):
     FIXTURE_PATH = os.path.join(
         os.path.dirname(__file__), "fixtures", "buzzards_and_dreadful_crows.html"
+    )
+    NON_MUSIC_FIXTURE_PATH = os.path.join(
+        os.path.dirname(__file__), "fixtures", "non_music_release_calendar.html"
     )
 
     def setUp(self):
@@ -955,6 +1056,7 @@ class LoadPrefetchedTestCase(TestCase):
             "title": "Buzzards and Dreadful Crows",
             "primary_artist_names": "Guided by Voices",
             "url": "https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics",
+            "id": 12345,
             "api_path": "/songs/12345",
         }
         self.genius_record = {
@@ -962,25 +1064,85 @@ class LoadPrefetchedTestCase(TestCase):
             "writer_artists": [{"name": "Robert Pollard"}],
         }
 
-    def test_sets_service_state(self):
-        self.service.load_prefetched(
+    def load(self, html):
+        return self.service.load_prefetched(
             track_data=self.track_data,
             genius_record=self.genius_record,
-            html=self.html,
+            html=html,
         )
+
+    def test_sets_service_state(self):
+        assert self.load(self.html) is True
         assert self.service.title == self.track_data["title"]
         assert self.service.artist == self.track_data["primary_artist_names"]
         assert self.service.genius_record == self.genius_record
         assert len(self.service.lyrics) == 29
+        assert RejectedTrack.objects.count() == 0
 
     def test_no_http_calls(self):
         with patch("bnt_parser.utils.genius_page.requests.get") as mock_get:
-            self.service.load_prefetched(
-                track_data=self.track_data,
-                genius_record=self.genius_record,
-                html=self.html,
-            )
+            self.load(self.html)
             mock_get.assert_not_called()
+
+    def test_rejects_non_music_page(self):
+        with open(self.NON_MUSIC_FIXTURE_PATH, "rb") as f:
+            non_music_html = f.read()
+
+        assert self.load(non_music_html) is False
+        assert self.service.rejection_reason == RejectedTrack.ReasonEnum.NON_MUSIC
+
+        rejected = RejectedTrack.objects.get(external_id=self.track_data["id"])
+        assert rejected.reason == RejectedTrack.ReasonEnum.NON_MUSIC
+        assert rejected.endpoint == self.track_data["api_path"]
+        assert rejected.title == self.track_data["title"]
+        assert rejected.artist == self.track_data["primary_artist_names"]
+
+    def test_non_music_page_leaves_no_service_state(self):
+        """
+        A rejected page must not half-populate the service. save_song() checks
+        title/artist/lyrics, so leaving them set would let a caller that ignored
+        the return value write the rejected track anyway.
+        """
+        with open(self.NON_MUSIC_FIXTURE_PATH, "rb") as f:
+            non_music_html = f.read()
+
+        self.load(non_music_html)
+
+        assert self.service.genius_record is None
+        assert self.service.lyrics == []
+        assert self.service.title == ""
+        assert self.service.artist == ""
+
+    def test_rejects_page_with_no_lyrics(self):
+        assert self.load(b"<html><body><p>Nothing to parse here.</p></body></html>") is False
+        assert self.service.rejection_reason == RejectedTrack.ReasonEnum.NO_LYRICS
+
+        rejected = RejectedTrack.objects.get(external_id=self.track_data["id"])
+        assert rejected.reason == RejectedTrack.ReasonEnum.NO_LYRICS
+
+    def test_non_music_takes_precedence_over_no_lyrics(self):
+        """
+        The release-calendar fixture has seven Lyrics__Container divs, so an
+        empty-lyrics test alone would never catch it. Order matters here.
+        """
+        with open(self.NON_MUSIC_FIXTURE_PATH, "rb") as f:
+            non_music_html = f.read()
+
+        page = GeniusPage(url=self.track_data["url"], html=non_music_html)
+        assert len(page.lyrics()) > 0, "Fixture must have parseable text for this test to mean much"
+
+        self.load(non_music_html)
+        assert self.service.rejection_reason == RejectedTrack.ReasonEnum.NON_MUSIC
+
+    def test_keeps_page_with_no_writers(self):
+        """
+        The relaxed NO_WRITERS rule in full: an empty writer list reaches the HTML
+        stage and is kept, because the page itself is a normal song page.
+        """
+        assert self.load(self.html) is True
+        self.genius_record = {"id": 12345, "writer_artists": []}
+        assert self.load(self.html) is True
+        assert RejectedTrack.objects.count() == 0
 
 
 class NextSongViewTestCase(TestCase):
@@ -1032,6 +1194,9 @@ class SubmitPageViewTestCase(TestCase):
     FIXTURE_PATH = os.path.join(
         os.path.dirname(__file__), "fixtures", "buzzards_and_dreadful_crows.html"
     )
+    NON_MUSIC_FIXTURE_PATH = os.path.join(
+        os.path.dirname(__file__), "fixtures", "non_music_release_calendar.html"
+    )
 
     def setUp(self):
         with open(self.FIXTURE_PATH, encoding="utf-8") as f:
@@ -1040,6 +1205,7 @@ class SubmitPageViewTestCase(TestCase):
             "title": "Buzzards and Dreadful Crows",
             "primary_artist_names": "Guided by Voices",
             "url": "https://genius.com/Guided-by-voices-buzzards-and-dreadful-crows-lyrics",
+            "id": 12345,
             "api_path": "/songs/12345",
         }
         self.genius_record = {"id": 12345, "writer_artists": [{"name": "Robert Pollard"}]}
@@ -1115,6 +1281,98 @@ class SubmitPageViewTestCase(TestCase):
 
         assert Song.objects.count() == 0, "Song row must not survive a failed lyrics save"
         assert ExternalSource.objects.count() == 0, "External source must roll back with the song"
+
+    def test_returns_422_for_non_music_page(self):
+        """
+        The 422 is the whole point of the HTML-stage filter: the client uses it to
+        move on to the next candidate rather than treating the run as failed.
+        """
+        with open(self.NON_MUSIC_FIXTURE_PATH, encoding="utf-8") as f:
+            non_music_html = f.read()
+
+        with patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}):
+            response = self._post(
+                data={
+                    "track_data": self.track_data,
+                    "genius_record": self.genius_record,
+                    "html": non_music_html,
+                },
+                key=self.API_KEY,
+            )
+
+        assert response.status_code == 422
+        body = response.json()
+        assert body["rejected"] is True
+        assert body["detail"] == RejectedTrack.ReasonEnum.NON_MUSIC.label
+
+    def test_rejected_page_records_the_rejection_and_saves_nothing(self):
+        """
+        Recording the rejection is what breaks the deadlock. Saving nothing is what
+        keeps the rejection honest: a Song row would make the track look processed.
+        """
+        with open(self.NON_MUSIC_FIXTURE_PATH, encoding="utf-8") as f:
+            non_music_html = f.read()
+
+        with patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}):
+            self._post(
+                data={
+                    "track_data": self.track_data,
+                    "genius_record": self.genius_record,
+                    "html": non_music_html,
+                },
+                key=self.API_KEY,
+            )
+
+        rejected = RejectedTrack.objects.get(external_id=self.track_data["id"])
+        assert rejected.reason == RejectedTrack.ReasonEnum.NON_MUSIC
+        assert rejected.endpoint == self.track_data["api_path"]
+        assert Song.objects.count() == 0
+        assert ExternalSource.objects.count() == 0
+
+    def test_returns_422_for_page_with_no_lyrics(self):
+        with patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}):
+            response = self._post(
+                data={
+                    "track_data": self.track_data,
+                    "genius_record": self.genius_record,
+                    "html": "<html><body><p>Nothing to parse here.</p></body></html>",
+                },
+                key=self.API_KEY,
+            )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == RejectedTrack.ReasonEnum.NO_LYRICS.label
+        assert RejectedTrack.objects.get(external_id=self.track_data["id"]).reason == (
+            RejectedTrack.ReasonEnum.NO_LYRICS
+        )
+
+    def test_saves_page_with_no_writers(self):
+        """
+        A song page with an empty writer list is kept, not rejected — the relaxed
+        NO_WRITERS rule, checked end to end through the view.
+        """
+        genius_record = {
+            "id": 999002,
+            "api_path": "/songs/999002",
+            "title": "Buzzards and Dreadful Crows",
+            "primary_artist": {"name": "Guided by Voices"},
+            "album": None,
+            "writer_artists": [],
+        }
+
+        with patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}):
+            response = self._post(
+                data={
+                    "track_data": self.track_data,
+                    "genius_record": genius_record,
+                    "html": self.html_content,
+                },
+                key=self.API_KEY,
+            )
+
+        assert response.status_code == 200
+        assert Song.objects.count() == 1
+        assert RejectedTrack.objects.count() == 0
 
     def test_returns_400_when_fields_missing(self):
         with patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}):
