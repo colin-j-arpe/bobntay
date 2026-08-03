@@ -28,6 +28,10 @@ class SongService:
 
         self.song_object = None
 
+        # Set when a filter rejects the candidate, so the caller can report which
+        # one fired without re-reading the row it just wrote.
+        self.rejection_reason: RejectedTrack.ReasonEnum | None = None
+
     @staticmethod
     def is_translation(genius_record: dict) -> bool:
         """
@@ -51,7 +55,12 @@ class SongService:
         Persisting the decision is what keeps the ingestion loop moving: nothing is
         written to the song tables for a rejected candidate, so song_exists() stays
         False and the search would otherwise serve the same track forever.
+
+        track_data must carry "id" and "api_path" as well as the two display
+        fields. Every track from find_next_track() does, being a Genius search hit,
+        and the POST path receives that same object back from the client verbatim.
         """
+        self.rejection_reason = reason
         logging.info(
             'Rejecting song "%s" by %s: %s',
             track_data["title"],
@@ -135,19 +144,36 @@ class SongService:
 
         return None
 
-    def load_prefetched(self, track_data: dict, genius_record: dict, html: bytes) -> None:
+    def load_prefetched(self, track_data: dict, genius_record: dict, html: bytes) -> bool:
         """
         Load song data from pre-fetched HTML and pre-fetched Genius record.
         Used by the POST endpoint after the local script has fetched the page HTML.
+
+        Returns False if the page was rejected. The rejection is recorded before
+        returning, and no service state is set, so the caller must save nothing.
         """
-        self.genius_record = genius_record
         genius_page = GeniusPage(track_data["url"], html=html)
-        self.lyrics = genius_page.lyrics()
+
+        # Checked before the lyrics: a release calendar or tour setlist can carry
+        # plenty of parseable text, so an empty-lyrics test would let it through.
+        if genius_page.is_non_music():
+            self.reject_track(track_data, RejectedTrack.ReasonEnum.NON_MUSIC)
+            return False
+
+        lyrics = genius_page.lyrics()
+        if not lyrics:
+            self.reject_track(track_data, RejectedTrack.ReasonEnum.NO_LYRICS)
+            return False
+
+        self.genius_record = genius_record
+        self.lyrics = lyrics
         logging.info(f"Parsed {len(self.lyrics)} lines")
 
         self.title = track_data["title"]
         self.artist = track_data["primary_artist_names"]
         logging.info(f"Recording {self.artist} as artist, {self.title} as title")
+
+        return True
 
     def fetch_genius_page(self, track_data: dict) -> bool:
         """
@@ -170,9 +196,22 @@ class SongService:
             self.reject_track(track_data, RejectedTrack.ReasonEnum.TRANSLATION)
             return False
 
-        self.genius_record = genius_entry
         genius_page = GeniusPage(track_data["url"])
-        self.lyrics = genius_page.lyrics()
+
+        # The same two HTML-stage checks load_prefetched() applies, so the legacy
+        # in-process path and the split GET/POST path share one blocklist rather
+        # than disagreeing about which pages are worth keeping.
+        if genius_page.is_non_music():
+            self.reject_track(track_data, RejectedTrack.ReasonEnum.NON_MUSIC)
+            return False
+
+        lyrics = genius_page.lyrics()
+        if not lyrics:
+            self.reject_track(track_data, RejectedTrack.ReasonEnum.NO_LYRICS)
+            return False
+
+        self.genius_record = genius_entry
+        self.lyrics = lyrics
         logging.info(f"Parsed {len(self.lyrics)} lines")
 
         self.title = track_data["title"]
