@@ -12,6 +12,8 @@ Env:
   PAGE_CODES    comma-separated statuses returned by GET /page
   SUBMIT_CODES  comma-separated statuses returned by POST /parse/submit-page/
   SUBMIT_BODY   "json" (default) or "html", to return a 422 that is not JSON
+  REPORT_CODES  comma-separated statuses returned by POST /parse/report-page-failure/
+                (404 stands in for a server deployed before that endpoint existed)
 
 Each list is consumed in order and its final entry repeats once exhausted, so
 SUBMIT_CODES=422 means "reject everything" and SUBMIT_CODES=422,200 means
@@ -30,9 +32,10 @@ def status_codes(name, default):
 NEXT_CODES = status_codes("NEXT_CODES", "200")
 PAGE_CODES = status_codes("PAGE_CODES", "200")
 SUBMIT_CODES = status_codes("SUBMIT_CODES", "200")
+REPORT_CODES = status_codes("REPORT_CODES", "200")
 SUBMIT_BODY = os.environ.get("SUBMIT_BODY", "json")
 
-served = {"next": 0, "page": 0, "submit": 0}
+served = {"next": 0, "page": 0, "submit": 0, "report": 0}
 
 
 def next_status(key, code_list):
@@ -88,6 +91,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.rfile.read(int(self.headers.get("Content-Length", 0)))
+
+        if self.path.startswith("/parse/report-page-failure/"):
+            self.report_page_failure()
+            return
+
         code = next_status("submit", SUBMIT_CODES)
 
         if code == 200:
@@ -98,6 +106,29 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(422, json.dumps({"detail": "Tagged Non-Music.", "rejected": True}))
         else:
             self.respond(code, json.dumps({"detail": f"stub {code}"}))
+
+    def report_page_failure(self):
+        code = next_status("report", REPORT_CODES)
+
+        if code == 200:
+            self.respond(
+                200,
+                json.dumps({"detail": "Genius page no longer exists", "rejected": True}),
+            )
+        elif code == 400:
+            self.respond(
+                400,
+                json.dumps(
+                    {
+                        "detail": "Status 403 is not a permanent failure; no rejection recorded.",
+                        "rejected": False,
+                    }
+                ),
+            )
+        else:
+            # 404 stands in for a server deployed before this endpoint existed;
+            # Django answers an unknown route with an HTML debug page, not JSON.
+            self.respond(code, "<html><body>Not Found</body></html>", "text/html")
 
 
 server = HTTPServer(("127.0.0.1", 0), Handler)

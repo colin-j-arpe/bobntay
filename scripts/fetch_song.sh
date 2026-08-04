@@ -5,8 +5,9 @@
 # Genius lyrics page from the local machine (bypassing server-side bot
 # detection), and submits the HTML back to the server for parsing and storage.
 #
-# If the server rejects a candidate on the strength of its HTML (422), the whole
-# cycle is retried with the next candidate, up to MAX_ATTEMPTS times.
+# If the server rejects a candidate on the strength of its HTML (422), or the
+# Genius page turns out to be gone, the whole cycle is retried with the next
+# candidate, up to MAX_ATTEMPTS times.
 #
 # Configuration is loaded from the first .env file found in this order:
 #   1. ~/.config/bobntay/.env  (user-level override, keeps secrets out of the repo)
@@ -51,6 +52,42 @@ log() {
 # the raw body when the response was not JSON at all — a proxy error page, say.
 response_detail() {
     jq -r '.detail // empty' "$1" 2>/dev/null || cat "$1"
+}
+
+# Tell the server the Genius page could not be fetched. Only this machine ever sees
+# that failure, and a page that has been deleted is a permanent property of the
+# track — unreported, it stalls every future run on the same candidate.
+#
+# The observed status is reported and nothing else: the server decides which
+# statuses are a verdict about the track (a deleted page) and which are about this
+# machine (bot detection, an outage). Returns 0 only when a rejection was recorded,
+# so an older server without the endpoint simply fails the way it always did.
+report_page_failure() {
+    local status="$1"
+    local body="${WORK_DIR}/page_failure.json"
+    local response="${WORK_DIR}/page_failure_response.json"
+
+    jq --argjson status "$status" '{track_data: .track, page_status: $status}' \
+        "${WORK_DIR}/next_song.json" \
+        > "$body"
+
+    local code
+    code=$(curl -s \
+        -o "$response" \
+        -w "%{http_code}" \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -H "X-Api-Key: ${PARSE_API_KEY}" \
+        -d "@${body}" \
+        "${SERVER_URL}/parse/report-page-failure/")
+
+    if [ "$code" -eq 200 ]; then
+        log "Recorded as unavailable: $(response_detail "$response")"
+        return 0
+    fi
+
+    log "Server did not record the failure (status ${code}): $(response_detail "$response")"
+    return 1
 }
 
 # The server only discovers some bad candidates once it has seen the page HTML:
@@ -100,6 +137,10 @@ for ((ATTEMPT = 1; ATTEMPT <= MAX_ATTEMPTS; ATTEMPT++)); do
         "${GENIUS_URL}")
 
     if [ "$HTTP_CODE" -ne 200 ]; then
+        log "Genius page returned status ${HTTP_CODE}; reporting to server..."
+        if report_page_failure "$HTTP_CODE"; then
+            continue
+        fi
         log "ERROR: Genius page returned status ${HTTP_CODE}"
         exit 1
     fi

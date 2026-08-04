@@ -43,6 +43,7 @@ class RejectedTrack(models.Model):
         TRANSLATION = "TRANSLATION", "Translation of another song"
         NON_MUSIC = "NON_MUSIC", "Tagged Non-Music"
         NO_LYRICS = "NO_LYRICS", "No lyrics found on page"
+        PAGE_GONE = "PAGE_GONE", "Genius page no longer exists"
 
     source = EnumField(ExternalSource.SourceEnum, null=False, blank=False)
     external_id = models.IntegerField(null=True, blank=False)
