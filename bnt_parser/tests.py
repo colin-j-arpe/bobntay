@@ -1145,6 +1145,74 @@ class LoadPrefetchedTestCase(TestCase):
         assert RejectedTrack.objects.count() == 0
 
 
+class RejectUnavailablePageTestCase(TestCase):
+    """
+    The status-to-verdict policy. Kept server-side and pinned here because getting
+    it wrong in the permissive direction is unrecoverable: a rejection is
+    get_or_create with first-reason-wins, so a wave of 403s would blacklist good
+    songs with no built-in undo.
+    """
+
+    def setUp(self):
+        self.service = SongService(
+            table_service=TableService(),
+            genius_client=GeniusClient(),
+        )
+        self.track_data = {
+            "title": "Deleted Song",
+            "primary_artist_names": "Guided by Voices",
+            "url": "https://genius.com/Guided-by-voices-deleted-song-lyrics",
+            "id": 54321,
+            "api_path": "/songs/54321",
+        }
+
+    def report(self, page_status):
+        return self.service.reject_unavailable_page(
+            track_data=self.track_data,
+            page_status=page_status,
+        )
+
+    def test_404_records_page_gone(self):
+        assert self.report(404) is True
+        assert self.service.rejection_reason == RejectedTrack.ReasonEnum.PAGE_GONE
+
+        rejected = RejectedTrack.objects.get(external_id=self.track_data["id"])
+        assert rejected.reason == RejectedTrack.ReasonEnum.PAGE_GONE
+        assert rejected.source == ExternalSource.SourceEnum.GENIUS
+        assert rejected.endpoint == self.track_data["api_path"]
+        assert rejected.title == self.track_data["title"]
+        assert rejected.artist == self.track_data["primary_artist_names"]
+
+    def test_410_records_page_gone(self):
+        assert self.report(410) is True
+        assert RejectedTrack.objects.get(external_id=self.track_data["id"]).reason == (
+            RejectedTrack.ReasonEnum.PAGE_GONE
+        )
+
+    def test_403_records_nothing(self):
+        """
+        Bot detection is a fact about this machine, not about the song. Rejecting
+        here would lose a good track permanently the first time Genius throttles us.
+        """
+        assert self.report(403) is False
+        assert RejectedTrack.objects.count() == 0
+        assert self.service.rejection_reason is None
+
+    def test_server_error_records_nothing(self):
+        assert self.report(500) is False
+        assert RejectedTrack.objects.count() == 0
+
+    def test_200_records_nothing(self):
+        """A success should never reach this path, but must not reject if it does."""
+        assert self.report(200) is False
+        assert RejectedTrack.objects.count() == 0
+
+    def test_reporting_twice_leaves_one_row(self):
+        assert self.report(404) is True
+        assert self.report(404) is True
+        assert RejectedTrack.objects.filter(external_id=self.track_data["id"]).count() == 1
+
+
 class NextSongViewTestCase(TestCase):
     API_KEY = "test-api-key-123"
 
@@ -1404,6 +1472,111 @@ class SubmitPageViewTestCase(TestCase):
                 key="wrong-key",
             )
             assert response.status_code == 403
+
+
+class ReportPageFailureViewTestCase(TestCase):
+    API_KEY = "test-api-key-123"
+
+    def setUp(self):
+        self.track_data = {
+            "title": "Deleted Song",
+            "primary_artist_names": "Guided by Voices",
+            "url": "https://genius.com/Guided-by-voices-deleted-song-lyrics",
+            "id": 54321,
+            "api_path": "/songs/54321",
+        }
+
+    def _post(self, data=None, key=None):
+        headers = {"HTTP_X_API_KEY": key} if key else {}
+        return self.client.post(
+            "/parse/report-page-failure/",
+            data=json.dumps(data if data is not None else {}),
+            content_type="application/json",
+            **headers,
+        )
+
+    def report(self, page_status, key=None):
+        with patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}):
+            return self._post(
+                data={"track_data": self.track_data, "page_status": page_status},
+                key=self.API_KEY if key is None else key,
+            )
+
+    def test_404_returns_200_and_records_the_rejection(self):
+        response = self.report(404)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["rejected"] is True
+        assert body["detail"] == RejectedTrack.ReasonEnum.PAGE_GONE.label
+
+        rejected = RejectedTrack.objects.get(external_id=self.track_data["id"])
+        assert rejected.reason == RejectedTrack.ReasonEnum.PAGE_GONE
+        assert rejected.endpoint == self.track_data["api_path"]
+
+    def test_records_nothing_else(self):
+        """
+        A failed page fetch is a rejection and nothing more. A Song row here would
+        make the track look processed, which is the deadlock in reverse.
+        """
+        self.report(404)
+
+        assert Song.objects.count() == 0
+        assert ExternalSource.objects.count() == 0
+
+    def test_403_returns_400_and_records_nothing(self):
+        response = self.report(403)
+
+        assert response.status_code == 400
+        assert response.json()["rejected"] is False
+        assert "403" in response.json()["detail"]
+        assert RejectedTrack.objects.count() == 0
+
+    def test_returns_400_when_page_status_missing(self):
+        with patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}):
+            response = self._post(data={"track_data": self.track_data}, key=self.API_KEY)
+
+        assert response.status_code == 400
+        # Asserted on the message, not just the code: a malformed request and a
+        # legitimately-transient status both answer 400, and only the message says
+        # which. Without this the field validation could be deleted unnoticed.
+        assert "Missing or invalid fields" in response.json()["detail"]
+        assert RejectedTrack.objects.count() == 0
+
+    def test_returns_400_when_page_status_is_a_string(self):
+        """
+        Not coerced on purpose: a status arriving as "404" means the client is not
+        sending what it thinks it is, and guessing would write a permanent rejection
+        off a malformed request.
+        """
+        response = self.report("404")
+
+        assert response.status_code == 400
+        assert "Missing or invalid fields" in response.json()["detail"]
+        assert RejectedTrack.objects.count() == 0
+
+    def test_returns_400_when_track_data_missing(self):
+        with patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}):
+            response = self._post(data={"page_status": 404}, key=self.API_KEY)
+
+        assert response.status_code == 400
+        assert "Missing or invalid fields" in response.json()["detail"]
+        assert RejectedTrack.objects.count() == 0
+
+    def test_returns_403_without_key(self):
+        with patch.dict("os.environ", {"PARSE_API_KEY": self.API_KEY}):
+            response = self._post(
+                data={"track_data": self.track_data, "page_status": 404},
+            )
+
+        assert response.status_code == 403
+        assert RejectedTrack.objects.count() == 0
+
+    def test_returns_403_with_wrong_key(self):
+        response = self.report(404, key="wrong-key")
+
+        assert response.status_code == 403
+        assert RejectedTrack.objects.count() == 0
 
 
 class TableServiceTestCase(TestCase):

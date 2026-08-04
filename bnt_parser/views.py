@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from bnt_parser.clients.genius_client import GeniusClient
+from bnt_parser.models import RejectedTrack
 from bnt_parser.services.song_service import SongService
 from bnt_parser.services.table_service import TableService
 
@@ -95,3 +96,63 @@ class SubmitPageView(APIView):
             song_service.save_lyrics()
 
         return Response({"detail": f'Saved "{song_service.title}" by {song_service.artist}.'})
+
+
+class ReportPageFailureView(APIView):
+    """
+    POST: Record a track whose Genius page could not be fetched.
+
+    The page is fetched by the local client, so only the client sees the failure.
+    Without a way to report it, a deleted page is a hard stall: nothing is saved,
+    the same track is served again on the next GET, and every later run dies on it.
+
+    Expected JSON body:
+        track_data  (dict) — the track object returned by NextSongView
+        page_status (int)  — the HTTP status the client got from Genius
+
+    The client reports the status it observed and never a reason; the server decides
+    what the status means. Returns 200 when the rejection was recorded, and 400 when
+    the status is not a permanent failure — a 403 is bot detection and a 5xx is an
+    outage, and blacklisting a good song over either would be unrecoverable.
+    """
+
+    permission_classes = [ApiKeyPermission]
+
+    def post(self, request):
+        track_data = request.data.get("track_data")
+        page_status = request.data.get("page_status")
+
+        # Rejected explicitly rather than coerced: a status arriving as "404" or
+        # None means the client is not sending what it thinks it is, and guessing
+        # would write a permanent rejection off a malformed request.
+        if not track_data or not isinstance(page_status, int) or isinstance(page_status, bool):
+            return Response(
+                {"detail": "Missing or invalid fields: track_data (dict), page_status (int)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        song_service = SongService(
+            table_service=TableService(),
+            genius_client=GeniusClient(),
+        )
+        recorded = song_service.reject_unavailable_page(
+            track_data=track_data,
+            page_status=page_status,
+        )
+        if not recorded:
+            return Response(
+                {
+                    "detail": (
+                        f"Status {page_status} is not a permanent failure; no rejection recorded."
+                    ),
+                    "rejected": False,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "detail": RejectedTrack.ReasonEnum.PAGE_GONE.label,
+                "rejected": True,
+            }
+        )

@@ -8,6 +8,11 @@ from bnt_parser.models import ExternalSource, Line, RejectedTrack
 from bnt_parser.services.table_service import TableService
 from bnt_parser.utils.genius_page import GeniusPage
 
+# HTTP statuses from a Genius page fetch that are a verdict about the track rather
+# than about the machine asking. 403 is bot detection and 5xx is an outage: both are
+# transient, and rejecting on either would blacklist a good song permanently.
+PAGE_GONE_STATUSES = frozenset({404, 410})
+
 
 class SongService:
     """
@@ -75,6 +80,30 @@ class SongService:
             title=track_data["title"],
             artist=track_data["primary_artist_names"],
         )
+
+    def reject_unavailable_page(self, track_data: dict, page_status: int) -> bool:
+        """
+        Record a track whose Genius page is permanently gone.
+
+        The page is fetched by the local client, not here, so the client reports the
+        status it saw and this decides what it means. Returns False for a status
+        that is not a verdict about the track — the caller should keep failing
+        loudly rather than blacklist a song over a temporary block.
+
+        Deciding here rather than in the client keeps the policy in one tested
+        place, and means the client never names a rejection reason of its own.
+        """
+        if page_status not in PAGE_GONE_STATUSES:
+            logging.info(
+                'Not rejecting "%s" by %s: page status %s is not a permanent failure',
+                track_data["title"],
+                track_data["primary_artist_names"],
+                page_status,
+            )
+            return False
+
+        self.reject_track(track_data, RejectedTrack.ReasonEnum.PAGE_GONE)
+        return True
 
     def select_song(self):
         """

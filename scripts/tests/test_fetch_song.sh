@@ -140,9 +140,30 @@ expect_output "ERROR: /parse/submit-page/ returned status 500"
 expect_count "Requesting next song" 1
 
 echo "A blocked Genius fetch still fails loudly"
-run_script env PAGE_CODES=403
+run_script env PAGE_CODES=403 REPORT_CODES=400
 expect_exit 1
 expect_output "ERROR: Genius page returned status 403"
+expect_output "Server did not record the failure (status 400)"
+
+echo "A deleted Genius page is reported and the next candidate is tried"
+run_script env PAGE_CODES=404,200
+expect_exit 0
+expect_output "Recorded as unavailable: Genius page no longer exists"
+expect_output "Done: Saved"
+expect_count "Requesting next song" 2
+
+echo "Unbroken deleted pages stop at the attempt cap, and that is not an error"
+run_script env PAGE_CODES=404
+expect_exit 0
+expect_output "Stopping after 5 attempts"
+expect_count "Requesting next song" 5
+expect_no_output "Done: Saved"
+
+echo "A server without the report endpoint fails exactly as it did before"
+run_script env PAGE_CODES=404 REPORT_CODES=404
+expect_exit 1
+expect_output "ERROR: Genius page returned status 404"
+expect_count "Requesting next song" 1
 
 # ---------------------------------------------------------------------------
 
